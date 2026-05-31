@@ -1,0 +1,296 @@
+================================================================================
+LOCAL AI VOICE GENERATOR — macOS PORTABLE PROJECT
+================================================================================
+
+Created: 2026-05-24
+Author: AI-assisted development
+Target: macOS (Apple Silicon M1-M4, or Intel)
+Purpose: Fully offline AI text-to-speech for YouTube scripts
+
+Copy this entire folder to a Mac via USB. Then follow the setup below.
+
+
+================================================================================
+1. SETUP — RUN THESE COMMANDS IN ORDER
+================================================================================
+
+Open Terminal, cd to this folder, then:
+
+--- Step 1: Create virtual environment ---
+bash scripts/01_create_venv.sh
+
+--- Step 2: Install dependencies ---
+bash scripts/02_install_requirements.sh
+
+--- Step 3: Check GPU ---
+bash scripts/05_check_gpu.sh
+
+--- Step 4: Start the app ---
+bash scripts/04_start_app.sh
+
+Then open http://127.0.0.1:8000 in your browser.
+
+(Optional: pre-download models)
+bash scripts/03_download_models.sh
+
+
+================================================================================
+2. FILE STRUCTURE
+================================================================================
+
+medrread_mac/
+├── app/
+│   ├── main.py              — FastAPI server, API endpoints
+│   ├── config.py             — Paths, settings, model list
+│   ├── device_utils.py       — GPU detection (MPS/CUDA/CPU)
+│   ├── text_cleaner.py       — Script cleaning for narration
+│   ├── chunker.py            — Split long text into ~1200-char chunks
+│   ├── tts_engine.py         — Kokoro TTS engine
+│   ├── tts_silero.py         — Silero TTS engine (higher quality)
+│   ├── audio_tools.py        — Combine chunks, convert to MP3
+│   ├── job_store.py          — Save/load job metadata
+│   └── utils.py              — Helpers
+├── web/
+│   ├── index.html            — Simple UI
+│   ├── app.js                — Frontend logic
+│   └── style.css             — Dark theme
+├── models/
+│   ├── kokoro/               — Kokoro model files go here
+│   └── silero/               — Silero auto-downloads to torch cache
+├── outputs/
+│   ├── jobs/                 — Per-job files (text, chunks, audio)
+│   └── final/                — (reserved)
+├── scripts/
+│   ├── 01_create_venv.sh     — python3 -m venv venv
+│   ├── 02_install_requirements.sh  — pip install -r requirements.txt
+│   ├── 03_download_models.sh — Download Kokoro .pth file
+│   ├── 04_start_app.sh       — Start uvicorn + open browser
+│   ├── 05_check_gpu.sh       — Check torch, CUDA, MPS
+│   ├── 06_build_app.sh       — Build standalone .app bundle
+│   └── download_kokoro_model.py
+├── requirements.txt          — All Python dependencies
+├── setup.py                  — py2app build config
+├── .gitignore
+├── README.md
+└── INSTRUCTIONS_AND_CONTEXT.txt  ← this file
+
+
+================================================================================
+3. WHAT THIS APP DOES
+================================================================================
+
+The user pastes a YouTube script (or any long text) into a browser UI.
+
+The system:
+1. Cleans the text (removes markdown, production notes, speaker labels,
+   repeated punctuation, URLs, etc.)
+2. Splits it into narration-safe chunks (~1200 chars each)
+3. Sends each chunk to the selected TTS engine (Kokoro or Silero)
+4. Combines the audio chunks into one final WAV file
+5. Optionally converts to MP3
+6. Saves everything to outputs/jobs/{job_id}/
+7. Shows generated files in the UI for download
+
+Fully offline after model download. No cloud APIs. No paid services.
+
+
+================================================================================
+4. MODELS
+================================================================================
+
+Two TTS engines, selectable from the UI dropdown:
+
+--- KOKORO (default) ---
+- Fast, lightweight (~300MB model file)
+- 9 voices: 5 female (Heart, Bella, Nicole, Sarah, Sky), 4 male
+- Voice IDs: af_heart, af_bella, af_nicole, af_sarah, af_sky,
+             am_adam, am_michael, am_liam, am_onyx
+- Good for YouTube narration
+- Model downloaded from Hugging Face: hexgrad/Kokoro-82M
+
+--- SILERO TTS (high quality) ---
+- Higher quality, slower (~150MB, auto-downloads on first use)
+- 2 voice options: LJSpeech Female, English Multi-Speaker
+- Uses Apple Silicon GPU (MPS) if available
+- Model source: snakers4/silero-models on GitHub via torch.hub
+- Native sample rates: LJ=16000, v3_en=48000 (auto-resampled to 24000)
+
+
+================================================================================
+5. GPU / DEVICE DETECTION
+================================================================================
+
+The app detects the best available compute device:
+1. CUDA (NVIDIA GPUs) — not available on Mac
+2. MPS (Apple Silicon Metal Performance Shaders) — on M1/M2/M3/M4 Macs
+3. CPU — fallback for Intel Macs or when no GPU is found
+
+Detection logic in: app/device_utils.py
+```
+def get_device() -> str:
+    if torch.cuda.is_available(): return "cuda"
+    if torch.backends.mps.is_available(): return "mps"
+    return "cpu"
+```
+
+
+================================================================================
+6. KNOWN ISSUES & TROUBLESHOOTING
+================================================================================
+
+--- "No module named 'omegaconf'" ---
+  Fix: pip install omegaconf
+  (Silero TTS dependency)
+
+--- "MPS not available" on Apple Silicon ---
+  Check: bash scripts/05_check_gpu.sh
+  Requires: macOS 12.3+, PyTorch 2.0+ with MPS support
+  Fix: upgrade PyTorch: pip install --upgrade torch torchaudio
+
+--- "LibsndfileError: Format not recognised" ---
+  Fix: The audio data format is wrong. Update tts_silero.py
+  to properly convert tensors to numpy arrays.
+
+--- "Speaker not in supported list" ---
+  Fix: The speaker ID is wrong for the given model.
+  Check the model's available speakers in the error message.
+
+--- "apply_tts() got an unexpected keyword" ---
+  Fix: Different Silero model classes have different APIs:
+  - TTSModel_v2 (lj_v2): apply_tts(texts=str, sample_rate=int)
+  - TTSModelMultiAcc_v3 (v3_en): apply_tts(text=str, speaker=str, sample_rate=int)
+  See tts_silero.py for the correct branching.
+
+--- Audio plays too fast / too slow ---
+  Fix: Sample rate mismatch. The model generates at its native rate
+  (16000 for LJ, 48000 for v3_en) but might be written with wrong
+  sample rate. tts_silero.py now resamples to 24000.
+
+--- Kokoro auto-downloads model every time ---
+  Fix: Pre-download with: bash scripts/03_download_models.sh
+  Model goes to models/kokoro/kokoro-v0_19.pth
+  The tts_engine.py checks this path first and skips auto-download
+  if found.
+
+--- Port 8000 already in use ---
+  Fix: Change port in app/config.py (PORT = 8000 -> PORT = 8001)
+  Or kill the process: lsof -ti:8000 | xargs kill
+
+--- "ModuleNotFoundError: No module named 'app'" ---
+  Fix: You must run from the medrread_mac/ directory (the parent of app/)
+  The scripts do: cd "$(dirname "$0")/.." to handle this.
+
+--- MP3 conversion fails ---
+  Fix: Install ffmpeg: brew install ffmpeg
+  Without ffmpeg, WAV output works fine (select WAV in UI).
+
+
+================================================================================
+7. API ENDPOINTS (for debugging)
+================================================================================
+
+GET  /api/models        — List available TTS models
+GET  /api/voices?model= — List voices for a model
+GET  /api/device        — Show GPU/device info
+POST /api/generate      — Generate audio (see params below)
+GET  /api/jobs/{id}     — Get job status
+GET  /api/jobs/{id}/files — List generated files
+GET  /api/download/{id}/{filename} — Download a file
+GET  /api/history       — List past jobs
+
+Generate POST parameters:
+  text (required)  — The script text
+  model            — "kokoro" or "silero"
+  voice            — Voice/speaker ID
+  speed            — 0.5 to 2.0 (float)
+  output_format    — "wav" or "mp3"
+  clean_text       — "true" or "false"
+
+
+================================================================================
+8. COMPLETE PROJECT PROMPT (for AI recovery)
+================================================================================
+
+If something goes wrong and you need to paste this into a new AI chat,
+copy everything below this line:
+
+---
+I am building a macOS local offline AI voice generator.
+
+Important rules:
+- Do not execute commands. I will run them manually.
+- Use macOS Terminal and .sh scripts.
+- When creating or editing code, always give complete file contents.
+- Do not skip files. Do not assume test results.
+- After giving files, tell me exactly what to run and stop.
+- Keep the app simple. No cloud APIs. No paid APIs. No online generation.
+- No login. No database in version 1.
+- Use FastAPI backend + simple HTML/JS/CSS UI.
+- Use Kokoro TTS as primary, Silero TTS as high-quality fallback.
+- GPU detection: check MPS first (Apple Silicon), then CUDA, then CPU.
+- Audio must be saved as WAV at 24000 Hz sample rate.
+
+Target machine:
+- macOS (Apple Silicon M-series)
+- Python 3.11+
+- Fully offline after model download
+
+Folder structure (project root: medrread_mac/):
+medrread_mac/
+├── app/
+│   ├── main.py
+│   ├── config.py
+│   ├── device_utils.py
+│   ├── text_cleaner.py
+│   ├── chunker.py
+│   ├── tts_engine.py
+│   ├── tts_silero.py
+│   ├── audio_tools.py
+│   ├── job_store.py
+│   └── utils.py
+├── web/
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
+├── models/kokoro/
+├── models/silero/
+├── outputs/jobs/
+├── outputs/final/
+├── scripts/
+│   ├── 01_create_venv.sh
+│   ├── 02_install_requirements.sh
+│   ├── 03_download_models.sh
+│   ├── 04_start_app.sh
+│   ├── 05_check_gpu.sh
+│   ├── 06_build_app.sh
+│   └── download_kokoro_model.py
+├── requirements.txt
+├── setup.py
+├── README.md
+└── INSTRUCTIONS_AND_CONTEXT.txt
+
+Requirements: fastapi, uvicorn, python-multipart, pydantic, numpy==1.26.4,
+             soundfile, pydub, torch, torchaudio, kokoro, scipy, omegaconf
+
+Key implementation details:
+- Sequential job IDs: job_1, job_2, job_3...
+- Final filenames include voice and model: final_af_sky_kokoro.wav
+- Silero TTS: LJSpeech uses apply_tts(texts=str), v3_en uses apply_tts(text=str, speaker=str)
+- Silero native sample rates: LJ=16000, v3_en=48000 (resample to 24000)
+- Kokoro already outputs at 24000
+- Text cleaner removes markdown, production notes, speaker labels,
+  repeated punctuation, URLs, brackets
+- Chunker splits by paragraph then sentence, max 1200 chars per chunk
+- Pipeline caching: Kokoro pipeline loaded once and reused
+- Audio combiner: reads all chunk WAV files, adds 500ms silence between,
+  resamples to 24000 if needed, concatenates to final WAV
+
+Known issues on first run:
+- Kokoro model auto-downloads from HF if not in models/kokoro/
+- Silero model auto-downloads via torch.hub on first use
+- omegaconf must be installed for Silero
+---
+
+================================================================================
+END OF INSTRUCTIONS
+================================================================================

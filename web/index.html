@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local AI Voice Generator</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <div id="setupPage" class="container hidden">
+    <h1>Setup — Download AI Models</h1>
+    <p class="setup-subtitle">These models are required for voice generation and will be stored locally on your machine.</p>
+    <div id="modelList" class="model-list"></div>
+    <div class="setup-footer">
+      <button id="continueBtn" class="hidden" onclick="onSetupComplete()">Continue to App</button>
+      <p id="setupStatus" class="setup-status"></p>
+    </div>
+  </div>
+
+  <div id="mainPage" class="container hidden">
+    <h1>Local AI Voice Generator</h1>
+
+    <div class="top-bar">
+      <div class="device-info" id="deviceInfo">Device: checking...</div>
+      <div class="model-select">
+        <label for="modelSelect">Model:</label>
+        <select id="modelSelect"></select>
+      </div>
+    </div>
+
+    <textarea id="scriptInput" placeholder="Paste your YouTube script or text here..."></textarea>
+
+    <div class="controls">
+      <div class="control-group">
+        <label for="voiceSelect">Voice:</label>
+        <select id="voiceSelect"></select>
+      </div>
+
+      <div class="control-group">
+        <label for="speedInput">Speed: <span id="speedValue">1.0</span></label>
+        <input type="range" id="speedInput" min="0.5" max="2.0" step="0.1" value="1.0">
+      </div>
+
+      <div class="control-group">
+        <label for="formatSelect">Output:</label>
+        <select id="formatSelect">
+          <option value="wav">WAV</option>
+          <option value="mp3">MP3</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="generateBtn" onclick="generate()">Generate Voice</button>
+
+    <div id="progress" class="hidden">
+      <div class="progress-bar">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <p id="progressText">Starting...</p>
+    </div>
+
+    <div id="result" class="hidden">
+      <h2>Generated Files</h2>
+      <ul id="fileList"></ul>
+    </div>
+
+    <div id="history">
+      <h2>History</h2>
+      <ul id="historyList"></ul>
+    </div>
+  </div>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>

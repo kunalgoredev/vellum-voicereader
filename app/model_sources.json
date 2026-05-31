@@ -1,0 +1,15 @@
+{
+  "_comment": "Model download configuration. To switch from Google Drive to S3, change the 'url' field. To switch the entire hosting provider, change 'provider' to 's3'.",
+  "provider": "google_drive",
+  "models": {
+    "kokoro": {
+      "filename": "kokoro-v0_19.pth",
+      "description": "Kokoro TTS Model (~320MB) — Required for the fast, lightweight TTS engine",
+      "size_mb": 320,
+      "url": "https://drive.google.com/uc?export=download&id=YOUR_GOOGLE_DRIVE_FILE_ID",
+      "alt_urls": {
+        "huggingface": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v0_19.pth"
+      }
+    }
+  }
+}
