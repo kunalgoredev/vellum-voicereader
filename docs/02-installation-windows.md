@@ -1,8 +1,8 @@
 # Installation Guide — Windows
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Platform:** Windows 10/11 (x86_64)  
-**Last Updated:** 2026-05-31
+**Last Updated:** 2026-06-02
 
 ---
 
@@ -31,33 +31,39 @@
 
 ## Installation Steps
 
-### Step 1: Create Virtual Environment
+### One-Command Start (Recommended)
 
 ```cmd
-scripts\01_create_venv.bat
+start.bat
 ```
 
-This script:
-1. Removes any existing `venv/` directory
-2. Creates a new Python 3.12 virtual environment using `uv`
-3. Installs the `uv` package manager into the environment
+`start.bat` in the project root handles everything in sequence:
 
-**Expected output:**
+1. **Creates the virtual environment** (`.venv`) if it doesn't exist and installs all dependencies
+2. **Removes any corrupt leftover model files** (e.g. old `kokoro-v0_19.pth` stubs)
+3. **Downloads `kokoro-v1_0.pth`** (~310 MB) from HuggingFace with a live progress bar — only if not already present
+4. **Starts the FastAPI server** at http://127.0.0.1:8000
+
+On subsequent runs, steps 1–3 are skipped automatically; the server starts in seconds.
+
+**Expected first-run output:**
 ```
-Deleting old virtual environment if it exists...
-Creating virtual environment with Python 3.12...
-Using CPython 3.12.9
-Creating virtual environment at: .venv
-Virtual environment created successfully.
+========================================
+ Vellum Voice Reader - Setup & Start
+========================================
+
+[1/3] Virtual environment OK
+[2/3] Downloading Kokoro model ~310MB - this may take a few minutes...
+  100.0%  310.4 / 310.4 MB
+[2/3] Model downloaded OK
+[3/3] Starting server at http://127.0.0.1:8000
 ```
 
-### Step 2: Install Dependencies
+---
 
-```cmd
-scripts\02_install_requirements.bat
-```
+### Package Reference
 
-This script installs all Python packages from `requirements.txt`:
+All dependencies are installed automatically by `start.bat`. For reference:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
@@ -68,78 +74,24 @@ This script installs all Python packages from `requirements.txt`:
 | numpy | ==1.26.4 | Numerical computing |
 | soundfile | ≥0.12.1 | WAV audio I/O |
 | pydub | ≥0.25.1 | Audio format conversion |
-| torch | ≥2.5.0 | Deep learning framework |
-| torchaudio | ≥2.5.0 | Audio processing for PyTorch |
-| kokoro | ≥0.7.6,<0.8.0 | Primary TTS engine |
+| torch | ≥2.6.0 | Deep learning framework |
+| torchaudio | ≥2.6.0 | Audio processing for PyTorch |
+| kokoro | ≥0.7.6,<0.8.0 | Primary TTS engine (tested on 0.7.16) |
 | huggingface_hub | ≥0.27.0 | Model download |
 | scipy | ≥1.12.0 | Signal processing (resampling) |
 | omegaconf | ≥2.3.0 | Configuration (Silero dependency) |
 
-**Expected output:**
-```
-Installing requirements with uv...
-Resolved XX packages in X.Xs
-Installed YY packages in XXs
-Requirements installed successfully.
-```
-
-### Step 3: Verify GPU Acceleration (Optional but Recommended)
+### Verify GPU Acceleration (Optional)
 
 ```cmd
 scripts\05_check_gpu.bat
 ```
 
-This script checks:
-- Python version
-- PyTorch version
-- CUDA availability
-- GPU name (if CUDA is available)
-
 **Expected output with NVIDIA GPU:**
 ```
-Torch version: 2.12.0+cu126
+Torch version: 2.6.0+cu126
 CUDA available: True
-CUDA version: 12.6
 GPU 0: NVIDIA GeForce RTX 4080
-```
-
-**Expected output without GPU:**
-```
-Torch version: 2.12.0+cpu
-CUDA available: False
-```
-
-### Step 4: Download Models (Optional)
-
-```cmd
-scripts\03_download_models.bat
-```
-
-This pre-downloads the Kokoro TTS model to `models/kokoro/`. If skipped, the model auto-downloads on first generation.
-
-**Expected output:**
-```
-Downloading Kokoro model...
-Kokoro model saved to models\kokoro\kokoro-v0_19.pth
-Model download complete.
-```
-
-### Step 5: Start the Application
-
-```cmd
-scripts\04_start_app.bat
-```
-
-This script:
-1. Activates the virtual environment
-2. Launches the FastAPI server on http://127.0.0.1:8000
-3. Opens the default browser to the application URL
-
-**Expected output:**
-```
-Device: cuda
-GPU: NVIDIA GeForce RTX 4080
-INFO:     Uvicorn running on http://127.0.0.1:8000
 ```
 
 ---

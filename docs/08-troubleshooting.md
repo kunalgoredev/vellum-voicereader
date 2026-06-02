@@ -1,7 +1,7 @@
 # Troubleshooting Guide
 
-**Document Version:** 1.0.0  
-**Last Updated:** 2026-05-31
+**Document Version:** 1.1.0  
+**Last Updated:** 2026-06-02
 
 ---
 
@@ -140,9 +140,49 @@ python -c "import torch; print(torch.__version__); print(torch.version.cuda)"
 
 ---
 
-### 4. Generation Errors
+### 4. Kokoro / PyTorch Compatibility Issues
 
-#### 4.1 "ModuleNotFoundError: No module named 'omegaconf'"
+#### 4.0 `KPipeline.__init__() got an unexpected keyword argument 'model_path'`
+
+**Cause:** kokoro ≥0.7.12 removed the `model_path` kwarg from `KPipeline`. The new API accepts a `KModel` instance or a bool.
+
+**Fix:** This is already handled in `tts_engine.py`. If you see this error, ensure you are running the latest `tts_engine.py` from this repo.
+
+#### 4.0a `UnpicklingError: Weights only load failed` / `Unsupported operand 60`
+
+**Cause:** PyTorch 2.6 changed `torch.load` to default `weights_only=True`. The kokoro model file format is not compatible with strict weights-only loading.
+
+**Fix:** `tts_engine.py` monkey-patches `torch.load` during pipeline initialization to force `weights_only=False`. This is safe because the model is from a trusted source (HuggingFace `hexgrad/Kokoro-82M`). Ensure you are running the latest `tts_engine.py`.
+
+#### 4.0b `UnpicklingError: invalid load key, '<'`
+
+**Cause:** The `.pth` file in `models/kokoro/` is corrupted — it contains an HTML error page instead of model weights. This happens when a download fails silently (e.g. a placeholder Google Drive URL, or a network interruption that returns an error page).
+
+**Fix:**
+1. Delete the corrupt file:
+   ```cmd
+   del /f "models\kokoro\kokoro-v0_19.pth"
+   del /f "models\kokoro\kokoro-v1_0.pth"
+   ```
+2. Re-run `start.bat` — it will re-download the correct model.
+
+`start.bat` now automatically deletes `kokoro-v0_19.pth` (the old stub file) on every startup.
+
+#### 4.0c Wrong model version — `kokoro-v0_19.pth` vs `kokoro-v1_0.pth`
+
+**Cause:** The original project shipped with a placeholder download pointing to `kokoro-v0_19.pth`. kokoro ≥0.7.12 requires `kokoro-v1_0.pth`.
+
+**Fix:** `start.bat` handles this automatically. If running scripts manually:
+```cmd
+uv run python scripts\download_kokoro_model.py
+```
+This downloads `kokoro-v1_0.pth` from `https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth`.
+
+---
+
+### 5. Generation Errors
+
+#### 5.1 "ModuleNotFoundError: No module named 'omegaconf'"
 
 **Fix:**
 ```bash
@@ -151,19 +191,19 @@ pip install omegaconf
 
 Silero TTS requires omegaconf for configuration loading.
 
-#### 4.2 "Format not recognised" (LibsndfileError)
+#### 5.2 "Format not recognised" (LibsndfileError)
 
 **Cause:** soundfile can't determine the audio format to write.
 
 **Fix:** Ensure the audio data is a valid numpy array with shape (n,) for mono. Check the output of the TTS engine.
 
-#### 4.3 "Speaker not in supported list" (Silero)
+#### 5.3 "Speaker not in supported list" (Silero)
 
 **Cause:** The speaker ID doesn't exist in the selected model.
 
 **Fix:** The list of available speakers is shown in the error message. Use one of those.
 
-#### 4.4 "apply_tts() got an unexpected keyword argument"
+#### 5.4 "apply_tts() got an unexpected keyword argument"
 
 **Cause:** Different Silero model classes have different API signatures.
 
@@ -174,7 +214,7 @@ Silero TTS requires omegaconf for configuration loading.
 | lj_v2 | TTSModel_v2 | `apply_tts(texts=str, sample_rate=int)` |
 | v3_en | TTSModelMultiAcc_v3 | `apply_tts(text=str, speaker=str, sample_rate=int)` |
 
-#### 4.5 "Pipeline loaded in Xs" repeated for every chunk
+#### 5.5 "Pipeline loaded in Xs" repeated for every chunk
 
 **Cause:** Pipeline caching isn't working — the model is reloaded for each chunk.
 
@@ -182,9 +222,9 @@ Silero TTS requires omegaconf for configuration loading.
 
 ---
 
-### 5. Server Issues
+### 6. Server Issues
 
-#### 5.1 "Address already in use" / port 8000 busy
+#### 6.1 "Address already in use" / port 8000 busy
 
 **Fix 1:** Kill the existing process:
 ```bash
@@ -201,13 +241,13 @@ lsof -ti:8000 | xargs kill
 PORT = 8001
 ```
 
-#### 5.2 Server starts but page shows "404 Not Found"
+#### 6.2 Server starts but page shows "404 Not Found"
 
 **Cause:** Static files not mounted correctly or wrong working directory.
 
 **Fix:** Start the server from the project root directory (where `app/` and `web/` exist).
 
-#### 5.3 UI loads but API calls fail
+#### 6.3 UI loads but API calls fail
 
 **Cause:** Usually a network or CORS issue. For localhost usage, CORS shouldn't be needed.
 
@@ -215,9 +255,9 @@ PORT = 8001
 
 ---
 
-### 6. Model Download Issues
+### 7. Model Download Issues
 
-#### 6.1 "HTTP Error 401: Unauthorized" (HuggingFace)
+#### 7.1 "HTTP Error 401: Unauthorized" (HuggingFace)
 
 **Cause:** Some HuggingFace models require authentication.
 
@@ -228,15 +268,15 @@ huggingface-cli login
 # Enter your HuggingFace token
 ```
 
-#### 6.2 "HTTP Error 404: Not Found"
+#### 7.2 "HTTP Error 404: Not Found"
 
 **Cause:** The download URL has changed.
 
 **Fix:** Check the model repository for updated URLs:
 - Kokoro: https://huggingface.co/hexgrad/Kokoro-82M
-- Model file: `kokoro-v0_19.pth`
+- Current model file: `kokoro-v1_0.pth`
 
-#### 6.3 Download is very slow
+#### 7.3 Download is very slow
 
 **Cause:** Model files are large (Kokoro: ~300MB, Silero: ~150MB).
 
@@ -244,9 +284,9 @@ huggingface-cli login
 
 ---
 
-### 7. MP3 Export Issues
+### 8. MP3 Export Issues
 
-#### 7.1 MP3 file is just a copied WAV
+#### 8.1 MP3 file is just a copied WAV
 
 **Cause:** ffmpeg is not installed. pydub requires ffmpeg for MP3 encoding.
 
@@ -260,9 +300,9 @@ huggingface-cli login
 
 ---
 
-### 8. Long Script Issues
+### 9. Long Script Issues
 
-#### 8.1 Generation takes too long
+#### 9.1 Generation takes too long
 
 **Expected behavior:**
 - Kokoro: ~0.3s per chunk
@@ -274,7 +314,7 @@ huggingface-cli login
 - The progress bar shows current chunk / total chunks
 - Wait for completion — the UI updates when done
 
-#### 8.2 Out of memory with very long scripts
+#### 9.2 Out of memory with very long scripts
 
 **Cause:** All chunks loaded into memory before writing final file.
 

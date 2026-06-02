@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv\\\\Scripts\\\\python.exe -c \"import kokoro; import inspect; from kokoro import KPipeline; print\\(inspect.signature\\(KPipeline.__init__\\)\\)\")",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import kokoro; import inspect; from kokoro import KPipeline; print\\(inspect.signature\\(KPipeline.__init__\\)\\)\")"
+    ]
+  }
+}

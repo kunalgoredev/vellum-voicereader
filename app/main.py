@@ -1,7 +1,9 @@
+import asyncio
+import json
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import torch
@@ -148,6 +150,134 @@ async def generate(
         "job_id": job_id,
         "status": "complete",
     }
+
+
+@app.post("/api/generate/enqueue")
+async def enqueue_generate(
+    text: str = Form(...),
+    model: str = Form("kokoro"),
+    voice: str = Form("af_heart"),
+    speed: float = Form(1.0),
+    output_format: str = Form("wav"),
+    clean_text: bool = Form(True),
+):
+    job_id = _next_job_id()
+    job_dir = JOBS_DIR / job_id
+    chunks_dir = job_dir / "chunks"
+    audio_chunks_dir = job_dir / "audio_chunks"
+    final_dir = job_dir / "final"
+
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    audio_chunks_dir.mkdir(parents=True, exist_ok=True)
+    final_dir.mkdir(parents=True, exist_ok=True)
+
+    (job_dir / "input_raw.txt").write_text(text, encoding="utf-8")
+
+    cleaned = text
+    if clean_text:
+        from app.text_cleaner import clean_text as _clean
+        cleaned = _clean(text)
+    (job_dir / "input_cleaned.txt").write_text(cleaned, encoding="utf-8")
+
+    from app.chunker import chunk_text
+    chunks = chunk_text(cleaned)
+
+    for i, chunk in enumerate(chunks):
+        (chunks_dir / f"chunk_{i:03d}.txt").write_text(chunk, encoding="utf-8")
+
+    now = datetime.now(timezone.utc)
+    save_job(job_id, {
+        "job_id": job_id,
+        "model": model,
+        "voice": voice,
+        "speed": speed,
+        "output_format": output_format,
+        "created_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "generating",
+        "total_chunks": len(chunks),
+    })
+
+    print(f"[ENQUEUE {job_id}] {len(chunks)} chunks, voice={voice}, model={model}")
+    return {"job_id": job_id, "total_chunks": len(chunks)}
+
+
+@app.get("/api/jobs/{job_id}/stream")
+async def stream_job(job_id: str):
+    job_dir = JOBS_DIR / job_id
+    if not job_dir.exists():
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+    meta = load_job(job_id)
+    if not meta:
+        return JSONResponse({"error": "Job metadata not found"}, status_code=404)
+
+    async def generate_events():
+        voice = meta["voice"]
+        speed = float(meta["speed"])
+        model = meta.get("model", "kokoro")
+        output_format = meta.get("output_format", "wav")
+
+        chunks_dir = job_dir / "chunks"
+        audio_chunks_dir = job_dir / "audio_chunks"
+        audio_chunks_dir.mkdir(exist_ok=True)
+
+        chunk_files = sorted(chunks_dir.glob("chunk_*.txt"))
+        total = len(chunk_files)
+
+        yield f"event: start\ndata: {json.dumps({'total': total})}\n\n"
+
+        tts = __import__("app.tts_silero", fromlist=["generate_chunk_audio"]) if model == "silero" \
+            else __import__("app.tts_engine", fromlist=["generate_chunk_audio"])
+
+        try:
+            for i, chunk_file in enumerate(chunk_files):
+                chunk_content = chunk_file.read_text(encoding="utf-8")
+                wav_path = audio_chunks_dir / f"chunk_{i:03d}.wav"
+                print(f"[STREAM {job_id}] chunk {i + 1}/{total}")
+                await asyncio.to_thread(tts.generate_chunk_audio, chunk_content, voice, speed, wav_path)
+                yield f"event: chunk\ndata: {json.dumps({'idx': i})}\n\n"
+
+            from app.audio_tools import combine_audio_chunks
+            final_dir = job_dir / "final"
+            final_wav_name = f"final_{voice}_{model}.wav"
+            final_wav = final_dir / final_wav_name
+            await asyncio.to_thread(combine_audio_chunks, audio_chunks_dir, final_wav)
+
+            final_mp3_name = None
+            if output_format == "mp3":
+                from app.audio_tools import convert_to_mp3
+                final_mp3_name = f"final_{voice}_{model}.mp3"
+                await asyncio.to_thread(convert_to_mp3, final_wav, final_dir / final_mp3_name)
+
+            meta["status"] = "complete"
+            meta["final_wav"] = final_wav_name
+            if final_mp3_name:
+                meta["final_mp3"] = final_mp3_name
+            save_job(job_id, meta)
+
+            print(f"[STREAM {job_id}] complete")
+            yield f"event: done\ndata: {json.dumps({'job_id': job_id})}\n\n"
+
+        except Exception as e:
+            print(f"[STREAM {job_id}] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            meta["status"] = "error"
+            save_job(job_id, meta)
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/jobs/{job_id}/chunks/{chunk_idx}")
+async def serve_chunk(job_id: str, chunk_idx: int):
+    wav_path = JOBS_DIR / job_id / "audio_chunks" / f"chunk_{chunk_idx:03d}.wav"
+    if not wav_path.exists():
+        return JSONResponse({"error": "Chunk not found"}, status_code=404)
+    return FileResponse(str(wav_path), media_type="audio/wav")
 
 
 @app.get("/api/device")

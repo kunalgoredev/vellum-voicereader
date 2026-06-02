@@ -92,11 +92,13 @@ A unified interface with two implementations:
 
 #### Kokoro TTS (`tts_engine.py`)
 - **Type:** Lightweight neural TTS
-- **Model:** ~300MB, auto-downloaded from HuggingFace
-- **Voices:** 9 (5 female, 4 male)
+- **Library version:** kokoro 0.7.x (tested on 0.7.16)
+- **Model file:** `kokoro-v1_0.pth` (~310 MB) from `hexgrad/Kokoro-82M` on HuggingFace
+- **Voices:** 9 (5 female, 4 male) — displayed as human-readable names in the UI
 - **Sample rate:** 24000 Hz (native)
-- **Pipeline caching:** Pipeline is initialized once and reused for all chunks
-- **Performance:** ~0.3s per chunk after pipeline load
+- **Pipeline caching:** `KPipeline` is initialized once per `lang_code` and reused for all chunks
+- **PyTorch 2.6 compatibility:** `tts_engine.py` monkey-patches `torch.load` to use `weights_only=False` for the duration of pipeline initialization, working around a strictness change in PyTorch 2.6
+- **Performance:** ~0.3s per chunk after pipeline load (CPU); faster on GPU
 
 #### Silero TTS (`tts_silero.py`)
 - **Type:** High-quality neural TTS
@@ -189,7 +191,7 @@ outputs/jobs/job_12/
 | Frontend | Vanilla HTML/JS/CSS | Zero build step, no dependencies, works everywhere |
 | Primary TTS | Kokoro | Lightweight, fast, natural, ~300MB model |
 | Secondary TTS | Silero | High quality, PyTorch-native, MPS support |
-| Deep Learning | PyTorch 2.5+ | Industry standard, CUDA + MPS support |
+| Deep Learning | PyTorch 2.6+ | Industry standard, CUDA + MPS support |
 | Audio Processing | soundfile, pydub, scipy | WAV I/O, MP3 conversion, resampling |
 | GPU Computing | CUDA (NVIDIA), MPS (Apple) | Automatic hardware acceleration |
 | Package Manager | uv | Fast dependency resolution, Python version management |
@@ -217,6 +219,5 @@ The current architecture is single-user, single-threaded. For production scaling
 
 ---
 
-**Document Version:** 1.0.0  
-**Last Updated:** 2026-05-31  
-**Author:** Local AI Voice Generator Team
+**Document Version:** 1.1.0  
+**Last Updated:** 2026-06-02

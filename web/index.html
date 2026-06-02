@@ -3,70 +3,181 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Local AI Voice Generator</title>
+  <title>Vellum — Voice Studio</title>
   <link rel="stylesheet" href="/web/style.css">
 </head>
 <body>
-  <div id="setupPage" class="container hidden">
-    <h1>Setup — Download AI Models</h1>
-    <p class="setup-subtitle">These models are required for voice generation and will be stored locally on your machine.</p>
-    <div id="modelList" class="model-list"></div>
-    <div class="setup-footer">
-      <button id="continueBtn" class="hidden" onclick="onSetupComplete()">Continue to App</button>
-      <p id="setupStatus" class="setup-status"></p>
+
+  <!-- ── Setup ──────────────────────────────────────────── -->
+  <div id="setupPage" class="page hidden">
+    <div class="setup-wrap">
+      <div class="setup-brand">
+        <h1>Vellum</h1>
+        <p>One-time download. Everything runs on your machine — no internet required after setup.</p>
+      </div>
+      <div id="modelList" class="model-list"></div>
+      <div class="setup-footer">
+        <button id="continueBtn" class="setup-cta hidden" onclick="onSetupComplete()">Open Voice Studio →</button>
+        <p id="setupStatus" class="setup-status-text"></p>
+      </div>
     </div>
   </div>
 
-  <div id="mainPage" class="container hidden">
-    <h1>Local AI Voice Generator</h1>
+  <!-- ── Main ───────────────────────────────────────────── -->
+  <div id="mainPage" class="page hidden">
+    <div class="app">
 
-    <div class="top-bar">
-      <div class="device-info" id="deviceInfo">Device: checking...</div>
-      <div class="model-select">
-        <label for="modelSelect">Model:</label>
-        <select id="modelSelect"></select>
-      </div>
-    </div>
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand-name">Vellum</span>
+          <span class="brand-dot">·</span>
+          <span class="brand-sub">Voice Studio</span>
+        </div>
+        <div class="header-pills">
+          <span class="pill" id="deviceInfo">—</span>
+          <span class="pill pill--engine">Kokoro AI</span>
+        </div>
+      </header>
 
-    <textarea id="scriptInput" placeholder="Paste your YouTube script or text here..."></textarea>
+      <main class="workspace">
 
-    <div class="controls">
-      <div class="control-group">
-        <label for="voiceSelect">Voice:</label>
-        <select id="voiceSelect"></select>
-      </div>
+        <!-- Left: text input -->
+        <section class="pane pane--left">
+          <div class="pane-header">
+            <span class="pane-title">Your Script</span>
+            <span class="word-count" id="wordCount"></span>
+          </div>
+          <textarea
+            id="scriptInput"
+            placeholder="Paste your script, article, essay, or any text here…"
+            spellcheck="false"
+          ></textarea>
+        </section>
 
-      <div class="control-group">
-        <label for="speedInput">Speed: <span id="speedValue">1.0</span></label>
-        <input type="range" id="speedInput" min="0.5" max="2.0" step="0.1" value="1.0">
-      </div>
+        <!-- Right: controls + actions + player -->
+        <section class="pane pane--right">
 
-      <div class="control-group">
-        <label for="formatSelect">Output:</label>
-        <select id="formatSelect">
-          <option value="wav">WAV</option>
-          <option value="mp3">MP3</option>
-        </select>
-      </div>
-    </div>
+          <!-- Voice / Speed / Format card -->
+          <div class="card settings-card">
+            <div class="setting-row">
+              <label class="setting-label" for="voiceSelect">Voice</label>
+              <select id="voiceSelect"></select>
+            </div>
+            <div class="card-rule"></div>
+            <div class="setting-row">
+              <label class="setting-label">Speed</label>
+              <div class="speed-track">
+                <input type="range" id="speedInput" min="0.5" max="2.0" step="0.1" value="1.0">
+                <span class="speed-val" id="speedValue">1.0×</span>
+              </div>
+            </div>
+            <div class="card-rule"></div>
+            <div class="setting-row">
+              <label class="setting-label">Format</label>
+              <div class="seg-ctrl" id="formatToggle">
+                <button class="seg-opt seg-opt--on" data-val="wav" onclick="setFormat('wav')">WAV</button>
+                <button class="seg-opt" data-val="mp3" onclick="setFormat('mp3')">MP3</button>
+              </div>
+            </div>
+          </div>
 
-    <button id="generateBtn" onclick="generate()">Generate Voice</button>
+          <!-- ETA card -->
+          <div class="card eta-card">
+            <span class="eta-time" id="etaTime">—</span>
+            <div class="eta-meta" id="etaMeta">Enter text above to see an estimate</div>
+          </div>
 
-    <div id="progress" class="hidden">
-      <div class="progress-bar">
-        <div id="progressFill" class="progress-fill"></div>
-      </div>
-      <p id="progressText">Starting...</p>
-    </div>
+          <!-- Two action buttons -->
+          <div class="action-stack">
 
-    <div id="result" class="hidden">
-      <h2>Generated Files</h2>
-      <ul id="fileList"></ul>
-    </div>
+            <button id="listenBtn" class="abtn abtn--listen" onclick="startSession('listen')">
+              <span class="abtn-icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <polygon points="3,1 15,8 3,15" fill="currentColor"/>
+                </svg>
+              </span>
+              <span class="abtn-body">
+                <span class="abtn-title">Listen Live</span>
+                <span class="abtn-sub">Plays audio as it generates</span>
+              </span>
+            </button>
 
-    <div id="history">
-      <h2>History</h2>
-      <ul id="historyList"></ul>
+            <button id="genBtn" class="abtn abtn--generate" onclick="startSession('generate')">
+              <span class="abtn-icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 2v9M4 8l4 4 4-4M2 14h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span class="abtn-body">
+                <span class="abtn-title">Generate File</span>
+                <span class="abtn-sub">Save to disk as WAV or MP3</span>
+              </span>
+            </button>
+
+          </div>
+
+          <!-- Live player (listen mode) -->
+          <div id="livePlayer" class="card player-card hidden">
+            <div class="pc-header">
+              <span class="live-dot" id="liveDot"></span>
+              <span class="pc-title" id="pcGenStatus">Preparing…</span>
+              <button class="stop-btn" id="stopBtn" onclick="stopSession()">■ Stop</button>
+            </div>
+            <div class="pc-tracks">
+              <div class="pc-track">
+                <span class="pc-tlabel">Generating</span>
+                <div class="pc-bar"><div class="pc-fill pc-fill--gen" id="lpGenFill"></div></div>
+                <span class="pc-tcount" id="lpGenCount">0 / 0</span>
+              </div>
+              <div class="pc-track">
+                <span class="pc-tlabel">Playing</span>
+                <div class="pc-bar"><div class="pc-fill pc-fill--play" id="lpPlayFill"></div></div>
+                <span class="pc-tcount" id="lpPlayCount">0 / 0</span>
+              </div>
+            </div>
+            <div class="pc-footer">
+              <button class="pc-playbtn" id="playPauseBtn" onclick="togglePlayback()">⏸ Pause</button>
+              <span class="pc-sub" id="playStatus">Waiting for first part…</span>
+            </div>
+          </div>
+
+          <!-- File generation progress (generate mode) -->
+          <div id="genProgress" class="card player-card hidden">
+            <div class="pc-header">
+              <span class="live-dot live-dot--amber"></span>
+              <span class="pc-title" id="gpTitle">Generating…</span>
+              <button class="stop-btn" onclick="stopSession()">■ Stop</button>
+            </div>
+            <div class="pc-tracks">
+              <div class="pc-track">
+                <span class="pc-tlabel">Progress</span>
+                <div class="pc-bar"><div class="pc-fill pc-fill--gen" id="gpFill"></div></div>
+                <span class="pc-tcount" id="gpCount">0 / 0</span>
+              </div>
+            </div>
+            <div class="pc-footer">
+              <span class="pc-sub" id="gpSub">Building audio…</span>
+            </div>
+          </div>
+
+          <!-- Download result -->
+          <div id="result" class="card result-card hidden">
+            <div class="result-header">
+              <span class="result-check">✓</span>
+              <span class="result-title">Ready to download</span>
+            </div>
+            <ul id="fileList" class="file-list"></ul>
+          </div>
+
+        </section>
+      </main>
+
+      <!-- History -->
+      <section class="history-section">
+        <h2 class="section-heading">Recent</h2>
+        <ul id="historyList" class="history-list"></ul>
+      </section>
+
     </div>
   </div>
 

@@ -36,15 +36,22 @@ def _get_pipeline(lang_code: str):
         t0 = time.time()
         from kokoro import KPipeline
 
-        model_path = _get_model_path()
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        if model_path:
-            _pipeline_cache[key] = KPipeline(
-                lang_code=lang_code, model_path=str(model_path), device=device
-            )
-        else:
-            _pipeline_cache[key] = KPipeline(lang_code=lang_code, device=device)
+        # kokoro's KModel hardcodes weights_only=True which breaks on PyTorch 2.6
+        # with the current model file format — patch it for the duration of load
+        _orig_load = torch.load
+        torch.load = lambda *a, **kw: _orig_load(*a, **{**kw, "weights_only": False})
+        try:
+            model_path = _get_model_path()
+            if model_path:
+                from kokoro import KModel
+                kmodel = KModel(model=str(model_path)).to(device).eval()
+                _pipeline_cache[key] = KPipeline(lang_code=lang_code, model=kmodel, device=device)
+            else:
+                _pipeline_cache[key] = KPipeline(lang_code=lang_code, device=device)
+        finally:
+            torch.load = _orig_load
 
         print(f"[Kokoro] Pipeline loaded in {time.time() - t0:.1f}s")
     return _pipeline_cache[key]
