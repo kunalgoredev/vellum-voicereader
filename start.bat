@@ -38,7 +38,7 @@ if not exist "models\kokoro\kokoro-v1_0.pth" (
 )
 
 REM --- Step 3: Start server ---
-echo [3/3] Starting server at http://127.0.0.1:8000
+echo [3/3] Starting server at http://0.0.0.0:7070
 echo.
-uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uv run python -m uvicorn app.main:app --host 0.0.0.0 --port 7070 --reload
 pause
