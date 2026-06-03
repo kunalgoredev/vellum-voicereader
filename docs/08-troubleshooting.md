@@ -361,6 +361,38 @@ If you encounter an issue not covered here:
 
 ---
 
-**Document Version:** 1.0.0  
-**Last Updated:** 2026-05-31  
-**Author:** Local AI Voice Generator Team
+---
+
+### 10. Electron App Errors (Windows)
+
+#### 10.1 `spawn uv ENOENT` / `spawn C:\Users\...\uv.EXE ENOENT`
+
+**Cause:** Three separate root causes were encountered in sequence:
+
+1. `findBin()` used `where uv` (shell command) to locate uv, returned a path that didn't exist on disk
+2. Fallback used `shell: true` → Node internally spawns `cmd.exe` → packaged Electron blocks `cmd.exe` spawn → `spawn C:\Windows\system32\cmd.exe ENOENT`
+3. `_searchPath()` walked PATH and found `C:\Users\Kunal\.local\bin\uv.EXE` via `fs.existsSync` (file appears in directory listing) but the binary is broken/non-executable (stale install from WSL or corrupt uv install)
+
+**Final fix in `electron/main.js`:**
+- Removed all `shell: true` / `execSync` / `spawnSync` usage in tooling discovery
+- Added `_canRun(fullPath)` which calls `execFileSync(path, ['--version'])` — no shell, direct binary test
+- `_searchPath()` now validates each candidate with both `fs.existsSync` AND `_canRun` before returning
+- Broken uv installs are skipped; setup falls through to plain `pip`
+
+**Status as of 2026-06-03:** Fix applied, not yet confirmed working on user's machine. Next session should verify and debug further if needed.
+
+#### 10.2 Electron won't find Python
+
+If Python is installed but not found by the app:
+- Ensure Python is in system PATH (not just user PATH for the current shell session)
+- Check `process.env.PATH` in Electron devtools console
+- Add Python path manually to system environment variables
+
+#### 10.3 Running from `win-unpacked` vs installer
+
+The user is running directly from `win-unpacked\Vellum.exe` without installing. This is valid. The app stores venv + models in `%APPDATA%\Vellum\` (userData). Delete that folder for a clean reinstall.
+
+---
+
+**Document Version:** 1.2.0
+**Last Updated:** 2026-06-03

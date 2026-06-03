@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(.venv\\\\Scripts\\\\python.exe -c \"import kokoro; import inspect; from kokoro import KPipeline; print\\(inspect.signature\\(KPipeline.__init__\\)\\)\")",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import kokoro; import inspect; from kokoro import KPipeline; print\\(inspect.signature\\(KPipeline.__init__\\)\\)\")"
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import kokoro; import inspect; from kokoro import KPipeline; print\\(inspect.signature\\(KPipeline.__init__\\)\\)\")",
+      "Bash(powershell.exe -Command \"Get-Process -Name 'python*','pip*' -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,CPU; Get-Process -Id 30440 -ErrorAction SilentlyContinue | Select-Object Id,CPU; \\(Get-ChildItem 'C:\\\\Users\\\\Kunal\\\\AppData\\\\Roaming\\\\Vellum\\\\.venv\\\\Lib\\\\site-packages' -ErrorAction SilentlyContinue | Measure-Object\\).Count\")",
+      "PowerShell(Copy-Item \"C:\\\\livedevelopment\\\\LiveProjects\\\\personal\\\\vellum-voicereader\\\\electron\\\\main.js\" \"C:\\\\livedevelopment\\\\LiveProjects\\\\personal\\\\vellum-voicereader\\\\dist\\\\win-unpacked\\\\resources\\\\app\\\\electron\\\\main.js\" -Force)",
+      "PowerShell(Get-Process -Name \"Vellum\" -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1; Remove-Item \"$env:APPDATA\\\\Vellum\\\\vellum.log\" -ErrorAction SilentlyContinue; $proc = Start-Process -FilePath \"C:\\\\livedevelopment\\\\LiveProjects\\\\personal\\\\vellum-voicereader\\\\dist\\\\win-unpacked\\\\Vellum.exe\" -PassThru; Write-Host \"PID: $\\($proc.Id\\)\")",
+      "PowerShell($devVenv = \"C:\\\\livedevelopment\\\\LiveProjects\\\\personal\\\\vellum-voicereader\\\\.venv\\\\Scripts\\\\python.exe\"; if \\(Test-Path $devVenv\\) { & $devVenv -c \"import uvicorn, fastapi, kokoro; print\\('all deps OK'\\)\" 2>&1 } else { Write-Host \"no dev venv\" })",
+      "Bash(sleep 12 && cat \"C:/Users/Kunal/AppData/Roaming/vellum/vellum.log\" 2>/dev/null || echo \"no log yet\")"
     ]
   }
 }

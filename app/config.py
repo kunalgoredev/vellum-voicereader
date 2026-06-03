@@ -4,12 +4,18 @@ from pathlib import Path
 
 
 def _get_data_dir() -> Path:
+    """Writable directory for models, outputs, venv.
+    Priority: VELLUM_DATA_DIR env var → frozen-exe parent → project root.
+    """
+    if 'VELLUM_DATA_DIR' in os.environ:
+        return Path(os.environ['VELLUM_DATA_DIR']).resolve()
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 
 
 def _get_resource_dir() -> Path:
+    """Read-only directory where app source code lives."""
     if getattr(sys, 'frozen', False):
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent.parent

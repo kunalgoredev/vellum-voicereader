@@ -1,4 +1,5 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -18,3 +19,7 @@ outputs/final/*
 dist/
 build/
 *.egg-info/
+
+# Electron
+node_modules/
+.setup_complete
