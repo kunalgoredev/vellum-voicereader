@@ -22,10 +22,6 @@
     },
     "files": [
       "electron/**/*",
-      "app/**/*",
-      "web/**/*",
-      "scripts/**/*",
-      "requirements.txt",
       "!**/__pycache__/**",
       "!**/*.pyc",
       "!**/*.pyo",
@@ -34,6 +30,37 @@
       "!outputs/**/*",
       "!dist/**/*",
       "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "app",
+        "to": "app"
+      },
+      {
+        "from": "web",
+        "to": "web"
+      },
+      {
+        "from": "scripts",
+        "to": "scripts"
+      },
+      {
+        "from": "requirements.txt",
+        "to": "requirements.txt"
+      },
+      {
+        "from": "requirements-lock.txt",
+        "to": "requirements-lock.txt"
+      },
+      {
+        "from": "resources/python",
+        "to": "python",
+        "filter": ["**/*", "!get-pip.py"]
+      },
+      {
+        "from": "resources/tools",
+        "to": "tools"
+      }
     ],
     "win": {
       "target": [
@@ -45,7 +72,8 @@
         }
       ],
       "icon": "resources/icon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "signAndEditExecutable": false
     },
     "mac": {
       "target": [

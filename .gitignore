@@ -20,6 +20,17 @@ dist/
 build/
 *.egg-info/
 
+# IDE
+.vscode/
+
+# Build artifacts (duplicate Mac bundle, not source)
+medrread_mac/
+medrread_mac.zip
+
+# Bundled runtime (downloaded at build time, not committed)
+resources/python/
+resources/tools/
+
 # Electron
 node_modules/
 .setup_complete

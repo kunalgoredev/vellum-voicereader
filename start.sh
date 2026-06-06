@@ -67,7 +67,11 @@ SENTINEL="$VENV/.deps_installed"
 if [ ! -f "$SENTINEL" ]; then
   echo "  → Installing dependencies (first run — ~3 min)…"
   if [ -n "$UV_BIN" ]; then
-    "$UV_BIN" pip install -r requirements.txt --python "$VENV_PYTHON" --quiet
+    if [ -f "$SCRIPT_DIR/requirements-lock.txt" ]; then
+      "$UV_BIN" pip install -r "$SCRIPT_DIR/requirements-lock.txt" --python "$VENV_PYTHON" --quiet
+    else
+      "$UV_BIN" pip install -r requirements.txt --python "$VENV_PYTHON" --quiet
+    fi
   else
     "$VENV_PYTHON" -m pip install --upgrade pip --quiet
     "$VENV_PYTHON" -m pip install -r requirements.txt --quiet

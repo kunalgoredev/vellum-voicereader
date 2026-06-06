@@ -91,7 +91,7 @@ A: The text cleaner removes:
 A: Yes. Set `clean_text` to `false` in the API call. The UI version doesn't expose this toggle in v1.0.
 
 ### Q: What is the maximum text length?
-A: No hard limit. The text is split into ~1200-character chunks and processed sequentially.
+A: No hard limit in code — the textarea accepts any amount. Text is split into ~1200-character chunks and processed sequentially. Practically, up to ~600,000 characters (~500 chunks) works well before RAM becomes a factor. For reference, a 10-minute YouTube script (~9,000 chars / ~1,500 words) produces about 8 chunks and takes under a minute.
 
 ---
 

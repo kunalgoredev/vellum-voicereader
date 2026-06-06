@@ -4,6 +4,7 @@ let livePlayer     = null;
 let currentFormat  = 'wav';
 let etaDevice      = 'cpu';
 let etaDebounce    = null;
+let sessionId      = 0;    // incremented each session to ignore stale events
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -139,8 +140,11 @@ function updateTextStats() {
     return;
   }
 
-  const secsPerChunk = etaDevice === 'cuda' ? 3 : 12;
-  const totalSecs    = chunks * secsPerChunk;
+  // Pipeline load: ~10s CUDA, ~20s CPU. Per-chunk: ~1.5s CUDA, ~5s CPU.
+  const loadTime = etaDevice === 'cuda' ? 10 : 20;
+  const secsPerChunk = etaDevice === 'cuda' ? 1.5 : 5;
+  const totalSecs = loadTime + (chunks * secsPerChunk);
+
   document.getElementById('etaTime').textContent = _fmtTime(totalSecs);
   document.getElementById('etaMeta').textContent =
     `${words.toLocaleString()} words · ${chunks} part${chunks !== 1 ? 's' : ''} · ${etaDevice.toUpperCase()}`;
@@ -184,9 +188,11 @@ async function startSession(mode) {
     return;
   }
 
-  // Cancel any in-flight session
+  // Cancel any in-flight session completely
   _teardown();
+  sessionId++;
 
+  const mySession = sessionId;
   _lock();
   document.getElementById('result').classList.add('hidden');
   document.getElementById('livePlayer').classList.add('hidden');
@@ -205,31 +211,40 @@ async function startSession(mode) {
     const { job_id, total_chunks } = await res.json();
 
     if (mode === 'listen') {
-      _startListen(job_id, total_chunks);
+      _startListen(job_id, total_chunks, mySession);
     } else {
-      _startGenerate(job_id, total_chunks);
+      _startGenerate(job_id, total_chunks, mySession);
     }
   } catch (e) {
-    _unlock();
-    _flashHint('Something went wrong — check the console');
+    if (mySession === sessionId) {
+      _unlock();
+      _flashHint('Something went wrong — check the console');
+    }
     console.error(e);
   }
 }
 
 function stopSession() {
   _teardown();
+  sessionId++;
   _unlock();
   document.getElementById('livePlayer').classList.add('hidden');
   document.getElementById('genProgress').classList.add('hidden');
 }
 
 function _teardown() {
-  if (liveEventSource) { liveEventSource.close(); liveEventSource = null; }
-  if (livePlayer)      { livePlayer.stop();        livePlayer      = null; }
+  if (liveEventSource) {
+    liveEventSource.close();
+    liveEventSource = null;
+  }
+  if (livePlayer) {
+    livePlayer.stop();
+    livePlayer = null;
+  }
 }
 
 // ── Listen mode ───────────────────────────────────────────────────────────────
-function _startListen(job_id, total) {
+function _startListen(job_id, total, mySession) {
   document.getElementById('livePlayer').classList.remove('hidden');
   document.getElementById('lpGenFill').style.width  = '0%';
   document.getElementById('lpPlayFill').style.width = '0%';
@@ -247,11 +262,13 @@ function _startListen(job_id, total) {
   liveEventSource = new EventSource(`/api/jobs/${job_id}/stream`);
 
   liveEventSource.addEventListener('chunk', (e) => {
+    if (mySession !== sessionId) return; // ignore stale session
     const { idx } = JSON.parse(e.data);
-    livePlayer.addChunk(idx, `/api/jobs/${job_id}/chunks/${idx}`);
+    if (livePlayer) livePlayer.addChunk(idx, `/api/jobs/${job_id}/chunks/${idx}`);
   });
 
   liveEventSource.addEventListener('done', async () => {
+    if (mySession !== sessionId) return;
     liveEventSource.close();
     liveEventSource = null;
     _unlock();
@@ -262,7 +279,8 @@ function _startListen(job_id, total) {
   });
 
   liveEventSource.addEventListener('error', () => {
-    if (!liveEventSource) return; // already handled by 'done'
+    if (mySession !== sessionId) return;
+    if (!liveEventSource) return;
     liveEventSource.close();
     liveEventSource = null;
     _unlock();
@@ -272,7 +290,7 @@ function _startListen(job_id, total) {
 }
 
 // ── Generate File mode ────────────────────────────────────────────────────────
-function _startGenerate(job_id, total) {
+function _startGenerate(job_id, total, mySession) {
   document.getElementById('genProgress').classList.remove('hidden');
   document.getElementById('gpFill').style.width = '0%';
   document.getElementById('gpCount').textContent = `0 / ${total}`;
@@ -284,6 +302,7 @@ function _startGenerate(job_id, total) {
   liveEventSource = new EventSource(`/api/jobs/${job_id}/stream`);
 
   liveEventSource.addEventListener('chunk', (e) => {
+    if (mySession !== sessionId) return;
     const { idx } = JSON.parse(e.data);
     ready = idx + 1;
     const pct = (ready / total) * 100;
@@ -296,6 +315,7 @@ function _startGenerate(job_id, total) {
   });
 
   liveEventSource.addEventListener('done', async () => {
+    if (mySession !== sessionId) return;
     liveEventSource.close();
     liveEventSource = null;
     _unlock();
@@ -305,6 +325,7 @@ function _startGenerate(job_id, total) {
   });
 
   liveEventSource.addEventListener('error', () => {
+    if (mySession !== sessionId) return;
     if (!liveEventSource) return;
     liveEventSource.close();
     liveEventSource = null;
@@ -411,7 +432,11 @@ class LivePlayer {
 
   stop() {
     this.audio.pause();
-    this.audio.src = '';
+    this.audio.removeAttribute('src');
+    this.audio.load(); // force reset
+    this.queue = [];
+    this.nextToPlay = 0;
+    this.started = false;
   }
 }
 

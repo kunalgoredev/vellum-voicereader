@@ -11,10 +11,14 @@ REM --- Step 1: venv ---
 if not exist .venv (
     echo [1/3] Creating virtual environment...
     uv venv --python 3.11
-    if errorlevel 1 ( echo FAILED: venv creation & pause & exit /b 1 )
+    if errorlevel 1 ( echo FAILED: venv creation ^& pause ^& exit /b 1 )
     echo [1/3] Installing dependencies...
-    uv pip install -r requirements.txt
-    if errorlevel 1 ( echo FAILED: dependency install & pause & exit /b 1 )
+    if exist requirements-lock.txt (
+        uv pip install -r requirements-lock.txt
+    ) else (
+        uv pip install -r requirements.txt
+    )
+    if errorlevel 1 ( echo FAILED: dependency install ^& pause ^& exit /b 1 )
 ) else (
     echo [1/3] Virtual environment OK
 )

@@ -3,28 +3,28 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path   = require('path');
 const fs     = require('fs');
+const os     = require('os');
 const http   = require('http');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 
-// ── Platform flags ────────────────────────────────────────────────────────────
+// ── Platform ───────────────────────────────────────────────────────────────────
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
-const IS_APPLE_SILICON = IS_MAC && process.arch === 'arm64';
 
-// Set true to bypass uv entirely and always use pip.
-// Useful when uv is installed but broken (e.g. WSL symlink, corrupted binary).
-const SKIP_UV = true;
-
-// ── Paths ─────────────────────────────────────────────────────────────────────
-// APP_ROOT: where the Python source lives (packaged = inside asar resources)
-const APP_ROOT = app.isPackaged
-  ? path.join(process.resourcesPath, 'app')
+// ── Paths (everything under the install directory) ────────────────────────────
+const INSTALL_DIR = app.isPackaged
+  ? path.dirname(app.getPath('exe'))
   : path.join(__dirname, '..');
 
-// DATA_DIR: writable user directory — venv, models, outputs live here
+const APP_ROOT = app.isPackaged
+  ? process.resourcesPath
+  : path.join(__dirname, '..');
+
 const DATA_DIR = app.isPackaged
-  ? app.getPath('userData')
-  : APP_ROOT; // dev mode: use project root (reuses existing .venv)
+  ? path.join(INSTALL_DIR, 'data')
+  : INSTALL_DIR;
+
+const LOG_DIR  = path.join(INSTALL_DIR, 'logs');
 
 const VENV_DIR   = path.join(DATA_DIR, '.venv');
 const MODELS_DIR = path.join(DATA_DIR, 'models');
@@ -42,24 +42,63 @@ let splashWin   = null;
 let backendProc = null;
 
 // ── Logging ───────────────────────────────────────────────────────────────────
-const LOG_FILE = path.join(app.getPath('userData'), 'vellum.log');
-function log(...args) {
-  const line = '[Vellum] ' + args.map(a =>
-    (typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a))
-  ).join(' ');
-  console.log(line);
-  try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch (_) {}
+let _logFile = null;
+let _logStarted = false;
+
+function _getLogFile() {
+  if (_logFile) return _logFile;
+  try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (_) {}
+  _logFile = path.join(LOG_DIR, 'vellum.log');
+  return _logFile;
 }
 
-// Clear log on each launch
-try { fs.writeFileSync(LOG_FILE, `=== Vellum launched ${new Date().toISOString()} ===\n`); } catch (_) {}
+function _ts() {
+  return new Date().toISOString().replace('T', ' ').slice(0, 23);
+}
 
-// ── Find tooling ──────────────────────────────────────────────────────────────
-// IMPORTANT: Never use shell: true or execSync/spawnSync here.
-// Packaged Electron on Windows blocks cmd.exe spawning.
-// Instead we walk PATH ourselves — pure Node.js, no subprocess.
+function log(level, ...args) {
+  const line = `[${_ts()}] [${level}] ` + args.map(a => {
+    if (a instanceof Error) return a.stack || a.message;
+    if (typeof a === 'object') {
+      try { return JSON.stringify(a, null, 2); } catch (_) { return String(a); }
+    }
+    return String(a);
+  }).join(' ');
 
-// Probe whether a binary at a full path actually executes (no shell).
+  if (level === 'ERROR') console.error(line);
+  else console.log(line);
+
+  try { fs.appendFileSync(_getLogFile(), line + '\n'); } catch (_) {}
+}
+
+function DEBUG(...args) { log('DEBUG', ...args); }
+function INFO(...args)  { log('INFO',  ...args); }
+function WARN(...args)  { log('WARN',  ...args); }
+function ERROR(...args) { log('ERROR', ...args); }
+
+// ── Sysinfo ───────────────────────────────────────────────────────────────────
+function _sysinfo() {
+  INFO('=== Vellum Voice Studio ===');
+  INFO(`platform:  ${process.platform} ${process.arch}`);
+  INFO(`electron:  ${process.versions.electron}`);
+  INFO(`packaged:  ${app.isPackaged}`);
+  INFO(`install:   ${INSTALL_DIR}`);
+  INFO(`appRoot:   ${APP_ROOT}`);
+  INFO(`dataDir:   ${DATA_DIR}`);
+  INFO(`venvDir:   ${VENV_DIR}`);
+  INFO(`logDir:    ${LOG_DIR}`);
+  INFO(`GPU:       ${_detectGpuSync()}`);
+  try {
+    INFO(`RAM: ${Math.round(os.freemem()/1e6)}MB free / ${Math.round(os.totalmem()/1e6)}MB total`);
+  } catch (_) {}
+}
+
+// ── Tool discovery ────────────────────────────────────────────────────────────
+function _resourcesDir() {
+  if (app.isPackaged) return process.resourcesPath;
+  return path.join(__dirname, '..', 'resources');
+}
+
 function _canRun(fullPath) {
   try {
     execFileSync(fullPath, ['--version'], { timeout: 5000, stdio: 'pipe' });
@@ -67,180 +106,269 @@ function _canRun(fullPath) {
   } catch (_) { return false; }
 }
 
-function _searchPath(name) {
-  const dirs = (process.env.PATH || '').split(IS_WIN ? ';' : ':');
-  const exts = IS_WIN
-    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';')
-    : [''];
-  for (const dir of dirs) {
-    if (!dir.trim()) continue;
-    for (const ext of exts) {
-      try {
-        const full = path.join(dir.trim(), name + ext);
-        // existsSync + _canRun: file must exist AND actually execute
-        if (fs.existsSync(full) && _canRun(full)) return full;
-      } catch (_) {}
+function _tryLocations(locs) {
+  for (const p of locs) {
+    try {
+      if (fs.existsSync(p) && _canRun(p)) return p;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function getBundledPython() {
+  const resDir = _resourcesDir();
+  const bundled = IS_WIN
+    ? _tryLocations([path.join(resDir, 'python', 'python.exe')])
+    : _tryLocations([path.join(resDir, 'python3', 'bin', 'python3')]);
+  if (bundled) return bundled;
+  return _findSystemPython();
+}
+
+function getBundledUv() {
+  const exe = IS_WIN ? 'uv.exe' : 'uv';
+  const bundled = _tryLocations([
+    path.join(_resourcesDir(), 'tools', exe),
+  ]);
+  if (bundled) return bundled;
+  return _findSystemUv();
+}
+
+function _findSystemPython() {
+  const names = IS_WIN ? ['python', 'python3', 'py']
+    : ['python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3'];
+  for (const name of names) {
+    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+      const p = path.join(dir, name + (IS_WIN ? '.exe' : ''));
+      if (fs.existsSync(p) && _canRun(p)) return p;
     }
   }
   return null;
 }
 
-function findUv() {
-  if (SKIP_UV) return null;
-  const fromPath = _searchPath('uv');
-  if (fromPath) return fromPath;
-
-  // Known uv install locations outside PATH
-  const locs = IS_WIN ? [
-    path.join(process.env.LOCALAPPDATA || '', 'uv',      'bin', 'uv.exe'),
-    path.join(process.env.USERPROFILE  || '', '.cargo',  'bin', 'uv.exe'),
-  ] : [
-    path.join(process.env.HOME || '', '.cargo', 'bin', 'uv'),
-    '/usr/local/bin/uv',
-  ];
-  return locs.find(p => { try { return fs.existsSync(p) && _canRun(p); } catch (_) { return false; } }) ?? null;
-}
-
-function findSystemPython() {
-  const names = IS_WIN
-    ? ['python', 'python3', 'py']
-    : ['python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3'];
-  for (const name of names) {
-    const p = _searchPath(name);
-    if (p) return p;
-  }
-  if (IS_WIN) {
-    const locs = [
-      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python313', 'python.exe'),
-      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python312', 'python.exe'),
-      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe'),
-      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python310', 'python.exe'),
-      'C:\\Python313\\python.exe', 'C:\\Python312\\python.exe', 'C:\\Python311\\python.exe',
-    ];
-    return locs.find(p => { try { return fs.existsSync(p) && _canRun(p); } catch (_) { return false; } }) ?? null;
+function _findSystemUv() {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    const p = path.join(dir, IS_WIN ? 'uv.exe' : 'uv');
+    if (fs.existsSync(p) && _canRun(p)) return p;
   }
   return null;
+}
+
+// ── GPU detection ─────────────────────────────────────────────────────────────
+function _detectGpuSync() {
+  if (!IS_WIN) return 'unknown';
+  try {
+    const r = spawnSync('nvidia-smi', ['-L'], { timeout: 5000, stdio: 'pipe' });
+    if (r.status === 0 && r.stdout.toString().includes('GPU')) return 'cuda';
+  } catch (_) {}
+  return 'cpu';
 }
 
 // ── Setup check ───────────────────────────────────────────────────────────────
 function isSetupComplete() {
   if (!fs.existsSync(PYTHON_BIN)) return false;
   if (!fs.existsSync(SETUP_FLAG)) return false;
-  // Check model
-  const kokDir = path.join(MODELS_DIR, 'kokoro');
-  if (!fs.existsSync(kokDir)) return false;
-  const models = fs.readdirSync(kokDir).filter(f => /\.(pth|pt)$/.test(f));
-  return models.length > 0;
+  try {
+    const kokDir = path.join(MODELS_DIR, 'kokoro');
+    if (!fs.existsSync(kokDir)) return false;
+    return fs.readdirSync(kokDir).some(f => /\.(pth|pt)$/.test(f));
+  } catch (_) { return false; }
 }
 
-// ── Run a process, stream output ──────────────────────────────────────────────
+// ── Run process — async spawn with live output ────────────────────────────────
 function runProc(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    log(`> ${cmd} ${args.join(' ')}`);
-    const proc = spawn(cmd, args, {
-      cwd:   opts.cwd  || APP_ROOT,
-      env:   opts.env  || process.env,
-      shell: false,    // always full paths — no shell needed
+    INFO(`spawn: ${cmd} ${args.join(' ')}`);
+    // Build env: always add bundled tools to PATH
+    const env = { ...(opts.env || process.env) };
+    const toolsDir = path.join(_resourcesDir(), 'tools');
+    env.PATH = toolsDir + path.delimiter + (env.PATH || '');
+    if (!env.VIRTUAL_ENV && VENV_DIR) env.VIRTUAL_ENV = VENV_DIR;
+
+    const child = spawn(cmd, args, {
+      cwd:   opts.cwd || DATA_DIR,
+      env:   env,
+      shell: false,
     });
-    proc.stdout.on('data', d => {
-      const s = d.toString().trim();
-      if (s) { log('[stdout]', s); opts.onLine?.(s); }
+
+    let stdoutBuf = '';
+    let stderrBuf = '';
+
+    child.stdout.on('data', d => {
+      const s = d.toString('utf8');
+      stdoutBuf += s;
+      s.split('\n').forEach(l => { const t = l.trim(); if (t) { DEBUG('stdout:', t.slice(0, 200)); opts.onLine?.(t); } });
     });
-    proc.stderr.on('data', d => {
-      const s = d.toString().trim();
-      if (s) { log('[STDERR]', s); opts.onLine?.(s); }
+
+    child.stderr.on('data', d => {
+      const s = d.toString('utf8');
+      stderrBuf += s;
+      s.split('\n').forEach(l => { const t = l.trim(); if (t) { DEBUG('stderr:', t.slice(0, 200)); opts.onLine?.(t); } });
     });
-    proc.on('error', err => {
-      log('[PROC ERROR]', err.code, err.message, 'cmd:', cmd, args.join(' '));
+
+    child.on('error', err => {
+      ERROR(`spawn error: ${cmd}`, err);
       reject(err);
     });
-    proc.on('close', code => {
-      log(`[close] ${cmd} exited with code ${code}`);
-      if (code === 0 || opts.allowNonZero) resolve(code);
-      else reject(new Error(`Process exited with code ${code}: ${cmd} ${args.join(' ')}`));
+
+    child.on('close', code => {
+      INFO(`${cmd} exited ${code}`);
+      if (code === 0 || opts.allowNonZero) {
+        resolve({ code, stdout: stdoutBuf, stderr: stderrBuf });
+      } else {
+        reject(new Error(`${cmd} exited ${code}\n${stderrBuf.slice(0, 500)}`));
+      }
     });
   });
 }
 
-// ── Full setup routine ────────────────────────────────────────────────────────
+// ── Bootstrap pip into bundled Python ─────────────────────────────────────────
+async function bootstrapPython(pythonBin) {
+  try {
+    execFileSync(pythonBin, ['-m', 'pip', '--version'], { timeout: 15000, stdio: 'pipe' });
+    INFO('pip already available');
+    return;
+  } catch (_) {}
+
+  INFO('Bootstrapping pip…');
+  const getPip = path.join(DATA_DIR, 'get-pip.py');
+  if (!fs.existsSync(getPip) || fs.statSync(getPip).size < 1000) {
+    INFO('Downloading get-pip.py…');
+    await new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(getPip);
+      require('https').get('https://bootstrap.pypa.io/get-pip.py', res => {
+        res.pipe(file);
+        file.on('finish', () => { file.close(); resolve(); });
+      }).on('error', reject);
+    });
+  }
+  await runProc(pythonBin, [getPip, '--no-warn-script-location']);
+  INFO('pip bootstrapped');
+}
+
+// ── SpaCy model check ─────────────────────────────────────────────────────────
+async function ensureSpacyModel(pythonBin) {
+  try {
+    execFileSync(pythonBin, ['-c', 'import spacy; spacy.load("en_core_web_sm")'],
+      { timeout: 15000, stdio: 'pipe', env: { ...process.env, VIRTUAL_ENV: VENV_DIR } });
+    INFO('spaCy model OK');
+    return;
+  } catch (_) {}
+
+  INFO('Downloading spaCy model (~15 MB)…');
+  await runProc(pythonBin,
+    ['-m', 'spacy', 'download', 'en_core_web_sm'],
+    { timeout: 120000 }
+  );
+  INFO('spaCy model installed');
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
 async function runSetup(send) {
-  // ── Diagnostics ────────────────────────────────────────────────────────────
-  log('=== SETUP START ===');
-  log('APP_ROOT:', APP_ROOT);
-  log('DATA_DIR:', DATA_DIR);
-  log('VENV_DIR:', VENV_DIR);
-  log('PYTHON_BIN:', PYTHON_BIN);
-  log('SETUP_FLAG:', SETUP_FLAG);
-  log('app.isPackaged:', app.isPackaged);
-  log('process.resourcesPath:', process.resourcesPath);
-  log('SKIP_UV:', SKIP_UV);
-  log('PATH:', process.env.PATH);
+  INFO('=== SETUP ===');
+  const gpu = _detectGpuSync();
+  INFO(`GPU: ${gpu}`);
 
-  // ── 1. Locate tooling ──────────────────────────────────────────────────────
-  send('Looking for Python…', 5);
-  const uvBin     = findUv();
-  const sysPython = findSystemPython();
-
-  log(`uv: ${uvBin || 'not found'}`);
-  log(`sysPython: ${sysPython || 'not found'}`);
-  log('PYTHON_BIN exists:', fs.existsSync(PYTHON_BIN));
-  log('requirements.txt exists:', fs.existsSync(path.join(APP_ROOT, 'requirements.txt')));
-
-  if (!uvBin && !sysPython) {
-    throw new Error(
-      'Python 3.9+ is required but was not found.\n\n' +
-      'Install from https://python.org  (Windows)\n' +
-      'or  brew install python@3.12      (Mac)\n' +
-      'then relaunch Vellum.'
-    );
+  // Clean stale state from previous failed attempts
+  send('Cleaning up…', 1);
+  if (!fs.existsSync(SETUP_FLAG) && fs.existsSync(VENV_DIR)) {
+    INFO('Removing stale venv from previous install');
+    try { fs.rmSync(VENV_DIR, { recursive: true, force: true }); } catch (e) { WARN('Failed to remove old venv:', e.message); }
   }
 
-  // ── 2. Create virtual environment ──────────────────────────────────────────
+  // Ensure data directories exist
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.join(DATA_DIR, 'models'), { recursive: true });
+  fs.mkdirSync(path.join(DATA_DIR, 'outputs'), { recursive: true });
+
+  // 1. Locate tools
+  send('Preparing…', 3);
+  const pythonBin = getBundledPython();
+  const uvBin     = getBundledUv();
+  INFO(`python: ${pythonBin}`);
+  INFO(`uv:     ${uvBin || 'none'}`);
+
+  if (!pythonBin) throw new Error('Python not found. Reinstall Vellum.');
+
+  await bootstrapPython(pythonBin);
+
+  // 2. Create venv
   const hasVenv = fs.existsSync(PYTHON_BIN);
   if (!hasVenv) {
-    send('Creating isolated Python environment…', 12);
+    send('Creating Python environment…', 8);
     fs.mkdirSync(DATA_DIR, { recursive: true });
-
     if (uvBin) {
-      // uv creates faster, smarter venvs
-      await runProc(uvBin, ['venv', VENV_DIR, '--python', '3.11'], { cwd: DATA_DIR });
+      await runProc(uvBin, ['venv', VENV_DIR, '--python', pythonBin], {
+        onLine: l => send(`Creating environment… ${l.slice(0, 60)}`, -1)
+      });
     } else {
-      await runProc(sysPython, ['-m', 'venv', VENV_DIR], { cwd: DATA_DIR });
+      await runProc(pythonBin, ['-m', 'venv', VENV_DIR]);
     }
-    log('venv created');
+    INFO('venv created');
   } else {
     send('Python environment ready', 12);
   }
 
-  // ── 3. Install / verify dependencies ──────────────────────────────────────
-  const reqFile = path.join(APP_ROOT, 'requirements.txt');
-
+  // 3. Install deps
   if (!fs.existsSync(SETUP_FLAG)) {
-    send('Installing AI dependencies — first run takes 2–4 min…', 20);
+    send('Installing AI libraries…', 15);
+
+    const lockFile = path.join(APP_ROOT, 'requirements-lock.txt');
+    const reqFile  = path.join(APP_ROOT, 'requirements.txt');
+
+    // Track progress from uv/pip output
+    let lastPct = 15;
+    const onLine = (l) => {
+      // uv download progress: "Downloading torch (150.2MiB / 1.2GiB)"
+      let m = l.match(/(\d+\.?\d*)\s*(MiB|GiB|MB|GB)\s*\/\s*(\d+\.?\d*)\s*(MiB|GiB|MB|GB)/);
+      if (m) {
+        send(`Downloading… ${parseFloat(m[1]).toFixed(0)} / ${parseFloat(m[3]).toFixed(0)} ${m[4]}`, -1);
+        return;
+      }
+      // uv percent: "Downloaded 45%"
+      m = l.match(/(\d+)%/);
+      if (m) {
+        send(`Downloading… ${m[1]}%`, -1);
+        return;
+      }
+      // Package names
+      m = l.match(/(?:Downloading|Preparing|Building|Installing)\s+(\S+)/);
+      if (m) {
+        send(`Installing ${m[1]}…`, -1);
+        return;
+      }
+      if (l.includes('Resolved')) {
+        lastPct = 25;
+        send(`Resolved — downloading packages…`, lastPct);
+      }
+    };
 
     if (uvBin) {
-      // uv pip is much faster than pip
-      await runProc(uvBin, ['pip', 'install', '-r', reqFile, '--python', PYTHON_BIN], {
-        cwd: APP_ROOT,
-        onLine: (l) => {
-          if (l.includes('Downloading') || l.includes('Installing')) {
-            send(l.length > 70 ? l.slice(0, 70) + '…' : l, -1);
-          }
-        }
-      });
+      await runProc(uvBin, ['pip', 'install', '-r', fs.existsSync(lockFile) ? lockFile : reqFile, '--python', PYTHON_BIN], { onLine });
     } else {
-      // Bootstrap pip if the venv was created without it (e.g. by uv)
-      log('Bootstrapping pip via ensurepip…');
-      await runProc(PYTHON_BIN, ['-m', 'ensurepip', '--upgrade'], { allowNonZero: true });
-      await runProc(PYTHON_BIN, ['-m', 'pip', 'install', '--upgrade', 'pip', '--quiet']);
-      await runProc(PYTHON_BIN, ['-m', 'pip', 'install', '-r', reqFile, '--quiet'], {
-        cwd: APP_ROOT,
-        onLine: (l) => {
-          if (l.includes('Downloading') || l.includes('Installing')) {
-            send(l.length > 70 ? l.slice(0, 70) + '…' : l, -1);
+      await runProc(PYTHON_BIN, ['-m', 'pip', 'install', '-r', reqFile, '--quiet'], { onLine });
+    }
+
+    // GPU upgrade
+    if (gpu === 'cuda') {
+      send('Checking GPU acceleration…', 55);
+      try {
+        const check = execFileSync(PYTHON_BIN,
+          ['-c', 'import torch; print("cuda" if torch.cuda.is_available() else "cpu")'],
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (check.toString().trim() === 'cpu') {
+          send('Installing NVIDIA GPU drivers (~1.2 GB)…', 57);
+          if (uvBin) {
+            await runProc(uvBin, ['pip', 'install', '--reinstall', '--python', PYTHON_BIN,
+              'torch', 'torchaudio', '--extra-index-url', 'https://download.pytorch.org/whl/cu126'], { onLine });
+          } else {
+            await runProc(PYTHON_BIN, ['-m', 'pip', 'install', '--force-reinstall',
+              'torch', 'torchaudio', '--extra-index-url', 'https://download.pytorch.org/whl/cu126'], { onLine });
           }
+        } else {
+          INFO('CUDA torch already present');
         }
-      });
+      } catch (_) { WARN('GPU check failed, keeping CPU torch'); }
     }
 
     send('Dependencies installed', 65);
@@ -248,18 +376,25 @@ async function runSetup(send) {
     send('Dependencies verified', 65);
   }
 
-  // ── 4. Download Kokoro model (~310 MB) ─────────────────────────────────────
-  const kokoroDir   = path.join(MODELS_DIR, 'kokoro');
-  const modelExists = fs.existsSync(kokoroDir) &&
-    fs.readdirSync(kokoroDir).some(f => /\.(pth|pt)$/.test(f));
+  // 4. SpaCy model
+  send('Checking language model…', 66);
+  await ensureSpacyModel(PYTHON_BIN);
+
+  // 5. Download model
+  const kokoroDir = path.join(MODELS_DIR, 'kokoro');
+  let modelExists = false;
+  try {
+    if (fs.existsSync(kokoroDir)) {
+      modelExists = fs.readdirSync(kokoroDir).some(f => /\.(pth|pt)$/.test(f));
+    }
+  } catch (_) {}
 
   if (!modelExists) {
-    send('Downloading AI voice model — 310 MB, once only…', 68);
+    send('Downloading AI voice model (~310 MB, once only)…', 68);
     const dlScript = path.join(APP_ROOT, 'scripts', 'download_kokoro_model.py');
     await runProc(PYTHON_BIN, [dlScript], {
-      cwd: APP_ROOT,
       env: { ...process.env, VELLUM_DATA_DIR: DATA_DIR, PYTHONIOENCODING: 'utf-8' },
-      onLine: (l) => {
+      onLine: l => {
         const m = l.match(/(\d+(\.\d+)?)%/);
         if (m) {
           const pct = parseFloat(m[1]);
@@ -267,73 +402,66 @@ async function runSetup(send) {
         }
       }
     });
-    send('Model downloaded', 97);
+    send('Model ready', 97);
   } else {
     send('AI model ready', 97);
   }
 
-  // ── 5. Write setup flag ────────────────────────────────────────────────────
   fs.writeFileSync(SETUP_FLAG, new Date().toISOString(), 'utf8');
-  send('All set!', 100);
+  send('Starting Vellum…', 100);
 }
 
-// ── Start Python backend ──────────────────────────────────────────────────────
+// ── Backend ───────────────────────────────────────────────────────────────────
 function startBackend() {
+  const toolsDir = path.join(_resourcesDir(), 'tools');
   const env = {
     ...process.env,
     VELLUM_DATA_DIR:    DATA_DIR,
     PYTHONIOENCODING:   'utf-8',
     PYTHONUNBUFFERED:   '1',
-    // Apple Silicon: hint PyTorch to use MPS (Metal)
     PYTORCH_ENABLE_MPS_FALLBACK: '1',
+    VIRTUAL_ENV:        VENV_DIR,
+    PATH:               toolsDir + path.delimiter + (process.env.PATH || ''),
   };
 
-  backendProc = spawn(
-    PYTHON_BIN,
+  backendProc = spawn(PYTHON_BIN,
     ['-m', 'uvicorn', 'app.main:app',
-     '--host', '127.0.0.1',
-     '--port', String(PORT),
-     '--no-access-log'],
-    { cwd: APP_ROOT, env }
-  );
+     '--host', '127.0.0.1', '--port', String(PORT), '--no-access-log'],
+    { cwd: APP_ROOT, env });
 
-  backendProc.stdout.on('data', d => log('[py]', d.toString().trim()));
-  backendProc.stderr.on('data', d => log('[py-err]', d.toString().trim()));
-  backendProc.on('close', code => log('[py] exited', code));
-  backendProc.on('error', err => log('[py] error', err.message));
+  backendProc.stdout.on('data', d => DEBUG('py:', d.toString().trim()));
+  backendProc.stderr.on('data', d => DEBUG('py:', d.toString().trim().slice(0, 300)));
+  backendProc.on('close', code => INFO(`backend exited ${code}`));
+  backendProc.on('error', err => ERROR('backend spawn error', err));
 }
 
-// ── Poll until server answers ─────────────────────────────────────────────────
 function waitForServer(timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
-      http.get(`${SERVER_URL}/api/setup/check`, (res) => {
-        log('server ready, status', res.statusCode);
+      http.get(`${SERVER_URL}/api/setup/check`, res => {
+        INFO(`server ready (${res.statusCode})`);
         resolve();
       }).on('error', () => {
         if (Date.now() > deadline) {
-          reject(new Error('Backend server did not start. Check that port 8000 is free.'));
+          reject(new Error('Backend did not start. Is port 8000 free?'));
         } else {
           setTimeout(check, 600);
         }
       });
     };
-    setTimeout(check, 1200); // give uvicorn a head start
+    setTimeout(check, 1200);
   });
 }
 
 // ── Windows ───────────────────────────────────────────────────────────────────
 function createSplash() {
   splashWin = new BrowserWindow({
-    width:          460,
-    height:         300,
-    resizable:      false,
-    frame:          false,
-    titleBarStyle:  IS_MAC ? 'hiddenInset' : 'default',
-    backgroundColor:'#080810',
+    width: 460, height: 340,
+    resizable: false, frame: false,
+    backgroundColor: '#080810',
     webPreferences: {
-      preload:          path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
     },
   });
@@ -344,27 +472,19 @@ function createSplash() {
 
 function createMain() {
   mainWin = new BrowserWindow({
-    width:          1260,
-    height:         820,
-    minWidth:       920,
-    minHeight:      600,
-    titleBarStyle:  IS_MAC ? 'hiddenInset' : 'default',
-    backgroundColor:'#080810',
-    show:           false,
+    width: 1260, height: 820,
+    minWidth: 920, minHeight: 600,
+    backgroundColor: '#080810',
+    show: false,
     webPreferences: { contextIsolation: true },
   });
-
   mainWin.loadURL(SERVER_URL);
-
   mainWin.once('ready-to-show', () => {
     if (splashWin && !splashWin.isDestroyed()) splashWin.close();
     mainWin.show();
     if (IS_MAC) app.dock.show();
   });
-
   mainWin.on('closed', () => { mainWin = null; });
-
-  // Open external links in browser, not Electron
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -372,32 +492,24 @@ function createMain() {
 }
 
 function buildMenu() {
-  const template = [
-    ...(IS_MAC ? [{ label: app.name, submenu: [
-      { role: 'about' }, { type: 'separator' }, { role: 'quit' }
-    ]}] : []),
-    { label: 'Edit', submenu: [
-      { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
-    ]},
-    { label: 'View', submenu: [
-      { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
-      { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' },
-      { role: 'togglefullscreen' }
-    ]},
-    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }] }
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(IS_MAC ? [{ label: app.name, submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'quit' }] }] : []),
+    { label: 'Edit', submenu: [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
+      { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }] },
+  ]));
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  if (IS_MAC) app.dock.hide(); // hide until main window is ready
+  _sysinfo();
+  if (IS_MAC) app.dock.hide();
   buildMenu();
 
   const splash = createSplash();
-
   const send = (msg, progress = -1) => {
-    log(msg);
+    INFO(`progress [${progress}%]: ${msg}`);
     if (splash && !splash.isDestroyed()) {
       splash.webContents.send('status', { msg, progress });
     }
@@ -410,45 +522,38 @@ app.whenReady().then(async () => {
       send('Starting Vellum…', 100);
     }
 
+    // Ensure spaCy model if venv exists but model missing
+    if (fs.existsSync(PYTHON_BIN)) {
+      await ensureSpacyModel(PYTHON_BIN);
+    }
+
     startBackend();
     send('Launching…', 100);
     await waitForServer();
     createMain();
-
   } catch (err) {
-    log('FATAL ERROR:', err.message);
-    log('FATAL STACK:', err.stack || '(no stack)');
+    ERROR('FATAL', err);
     if (splash && !splash.isDestroyed()) {
-      splash.webContents.send('error', err.message);
+      splash.webContents.send('error',
+        `${err.message}\n\nLog: ${_getLogFile()}`);
     }
-    // Give user time to read the error, then show a dialog
     setTimeout(() => {
       dialog.showMessageBoxSync({
-        type:    'error',
-        title:   'Vellum — Setup Failed',
+        type: 'error', title: 'Vellum — Setup Failed',
         message: err.message,
-        detail:  'Close this dialog, fix the issue, then relaunch Vellum.',
+        detail: `Log file: ${_getLogFile()}`,
       });
       app.quit();
     }, 3000);
   }
 });
 
-app.on('activate', () => {
-  // macOS: re-show when clicking dock icon
-  if (mainWin) mainWin.show();
-});
+app.on('activate', () => { if (mainWin) mainWin.show(); });
 
 function killBackend() {
-  if (backendProc) {
-    try { backendProc.kill('SIGTERM'); } catch (_) {}
-    backendProc = null;
-  }
+  if (backendProc) { try { backendProc.kill('SIGTERM'); } catch (_) {}; backendProc = null; }
 }
 
 app.on('before-quit', killBackend);
-app.on('will-quit',   killBackend);
-app.on('window-all-closed', () => {
-  killBackend();
-  if (!IS_MAC) app.quit();
-});
+app.on('will-quit', killBackend);
+app.on('window-all-closed', () => { killBackend(); if (!IS_MAC) app.quit(); });
