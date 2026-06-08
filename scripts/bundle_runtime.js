@@ -1,64 +1,63 @@
 'use strict';
 
-/**
- * bundle_runtime.js
- *
- * Downloads portable Python + uv binaries into resources/ at build time.
- * These are bundled into the Electron app so NO system tools are required.
- *
- * Run:  node scripts/bundle_runtime.js           (current platform only)
- *       node scripts/bundle_runtime.js --all      (both Windows + macOS)
- *       node scripts/bundle_runtime.js --mac      (macOS only)
- *       node scripts/bundle_runtime.js --win      (Windows only)
- */
-
-const fs     = require('fs');
-const path   = require('path');
-const zlib   = require('zlib');
-const stream = require('stream');
-const { pipeline } = require('stream/promises');
+const fs   = require('fs');
+const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const RESOURCES = path.join(ROOT, 'resources');
 
-// ── Download helper ─────────────────────────────────────────────────────────
-async function download(url, destPath, label) {
-  if (fs.existsSync(destPath)) {
-    console.log(`  [skip] ${label} — already present`);
-    return;
-  }
-  console.log(`  [downloading] ${label}…`);
-  const proto = url.startsWith('https') ? require('https') : require('http');
-  await new Promise((resolve, reject) => {
-    proto.get(url, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        proto.get(res.headers.location, (r2) => {
-          const file = fs.createWriteStream(destPath);
-          pipeline(r2, file).then(resolve).catch(reject);
-        }).on('error', reject);
+// ── Download helper (follows redirects) ─────────────────────────────────────
+function _downloadOne(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const proto = url.startsWith('https') ? require('https') : require('http');
+    const req = proto.get(url, { headers: { 'User-Agent': 'Vellum/1.0' } }, res => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        let next = res.headers.location;
+        if (!next.startsWith('http')) {
+          const u = require('url').parse(url);
+          next = `${u.protocol}//${u.host}${next}`;
+        }
+        res.resume();
+        resolve(_downloadOne(next, destPath)); // follow redirect
         return;
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        reject(new Error(`HTTP ${res.statusCode}`));
         return;
       }
       const total = parseInt(res.headers['content-length'], 10) || 0;
       let loaded = 0;
       const file = fs.createWriteStream(destPath);
-      res.on('data', (chunk) => {
+      res.on('data', chunk => {
         loaded += chunk.length;
-        if (total > 0) {
-          const pct = Math.round(loaded / total * 100);
-          process.stdout.write(`\r    ${pct}%  ${(loaded / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB  `);
+        if (total > 0 && loaded % (5 * 1024 * 1024) < 65536) {
+          process.stdout.write(`\r    ${Math.round(loaded/total*100)}%  ${(loaded/1e6).toFixed(0)}/${(total/1e6).toFixed(0)} MB  `);
         }
       });
-      pipeline(res, file).then(() => {
-        if (total > 0) process.stdout.write('\n');
-        resolve();
-      }).catch(reject);
-    }).on('error', reject);
+      res.pipe(file);
+      file.on('finish', () => { file.close(); if (total > 0) process.stdout.write('\n'); resolve(); });
+      file.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(60000, () => { req.destroy(); reject(new Error('timeout')); });
   });
-  console.log(`  [done] ${label}`);
+}
+
+async function download(url, destPath, label) {
+  if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) {
+    console.log(`  [skip] ${label} — already present`);
+    return;
+  }
+  console.log(`  [downloading] ${label}…`);
+  try {
+    await _downloadOne(url, destPath);
+    const size = fs.statSync(destPath).size;
+    if (size < 1000) throw new Error('file too small');
+    console.log(`  [done] ${label} (${(size/1e6).toFixed(1)} MB)`);
+  } catch (e) {
+    try { fs.unlinkSync(destPath); } catch (_) {}
+    throw new Error(`Download failed for ${label}: ${e.message}\nURL: ${url}`);
+  }
 }
 
 // ── Zip extraction ──────────────────────────────────────────────────────────
