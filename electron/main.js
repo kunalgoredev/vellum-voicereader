@@ -11,7 +11,10 @@ const { spawn, spawnSync, execFileSync } = require('child_process');
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 
-// ── Paths (everything under the install directory) ────────────────────────────
+// ── Paths ─────────────────────────────────────────────────────────────────────
+// Windows: everything under install directory (writable, user's AppData\Local)
+// Mac:     data/logs under ~/Library/Application Support/Vellum (app bundle is read-only)
+
 const INSTALL_DIR = app.isPackaged
   ? path.dirname(app.getPath('exe'))
   : path.join(__dirname, '..');
@@ -20,11 +23,15 @@ const APP_ROOT = app.isPackaged
   ? process.resourcesPath
   : path.join(__dirname, '..');
 
-const DATA_DIR = app.isPackaged
-  ? path.join(INSTALL_DIR, 'data')
-  : INSTALL_DIR;
+const DATA_DIR = (app.isPackaged && IS_MAC)
+  ? app.getPath('userData')
+  : app.isPackaged
+    ? path.join(INSTALL_DIR, 'data')
+    : INSTALL_DIR;
 
-const LOG_DIR  = path.join(INSTALL_DIR, 'logs');
+const LOG_DIR = (app.isPackaged && IS_MAC)
+  ? path.join(app.getPath('logs'))
+  : path.join(INSTALL_DIR, 'logs');
 
 const VENV_DIR   = path.join(DATA_DIR, '.venv');
 const MODELS_DIR = path.join(DATA_DIR, 'models');
