@@ -166,7 +166,7 @@ import site
 }
 
 // ── macOS: python-build-standalone + uv ─────────────────────────────────────
-const STANDALONE_VERSION = '20250310';
+const STANDALONE_VERSION = '20260602';
 
 async function bundleMac(arch) {
   const label = arch === 'arm64' ? 'Apple Silicon' : 'Intel';
@@ -180,9 +180,9 @@ async function bundleMac(arch) {
 
   // python-build-standalone
   const pyArch = arch === 'arm64' ? 'aarch64' : 'x86_64';
-  const standaloneName = `cpython-3.11.11+${STANDALONE_VERSION}-${pyArch}-apple-darwin-install_only`;
+  const standaloneName = `cpython-3.11.15+${STANDALONE_VERSION}-${pyArch}-apple-darwin-install_only`;
   const pyTar = path.join(RESOURCES, 'python-mac.tar.gz');
-  const pyUrl = `https://github.com/indygreg/python-build-standalone/releases/download/${STANDALONE_VERSION}/${standaloneName}.tar.gz`;
+  const pyUrl = `https://github.com/astral-sh/python-build-standalone/releases/download/${STANDALONE_VERSION}/${standaloneName}.tar.gz`;
 
   await download(pyUrl, pyTar, `Python standalone (macOS ${label})`);
 
