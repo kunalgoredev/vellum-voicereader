@@ -172,7 +172,7 @@ async function bundleMac(arch) {
   const label = arch === 'arm64' ? 'Apple Silicon' : 'Intel';
   console.log(`\n── Bundling macOS runtime (${label}) ──`);
 
-  const pyDir  = path.join(RESOURCES, 'python3');
+  const pyDir  = path.join(RESOURCES, 'python');   // same dir as Windows — extraResources expects this
   const toolDir = path.join(RESOURCES, 'tools');
 
   fs.mkdirSync(pyDir,   { recursive: true });

@@ -127,8 +127,8 @@ function getBundledPython() {
   const bundled = IS_WIN
     ? _tryLocations([path.join(resDir, 'python', 'python.exe')])
     : _tryLocations([
-        path.join(resDir, 'python3', 'bin', 'python3'),
-        path.join(resDir, 'python3', 'python', 'bin', 'python3'), // fallback: nested extraction
+        path.join(resDir, 'python', 'bin', 'python3'),
+        path.join(resDir, 'python3', 'bin', 'python3'), // legacy path
       ]);
   if (bundled) return bundled;
   return _findSystemPython();
