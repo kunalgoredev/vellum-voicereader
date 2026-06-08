@@ -53,11 +53,6 @@
         "to": "requirements-lock.txt"
       },
       {
-        "from": "resources/python",
-        "to": "python",
-        "filter": ["**/*", "!get-pip.py"]
-      },
-      {
         "from": "resources/tools",
         "to": "tools"
       }
@@ -73,7 +68,14 @@
       ],
       "icon": "resources/icon.ico",
       "requestedExecutionLevel": "asInvoker",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "extraResources": [
+        {
+          "from": "resources/python",
+          "to": "python",
+          "filter": ["**/*", "!get-pip.py"]
+        }
+      ]
     },
     "mac": {
       "target": [
@@ -89,7 +91,14 @@
       "category": "public.app-category.productivity",
       "darkModeSupport": true,
       "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extraResources": [
+        {
+          "from": "resources/python3",
+          "to": "python3",
+          "filter": ["**/*", "!get-pip.py"]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

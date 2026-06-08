@@ -284,6 +284,12 @@ async function runSetup(send) {
     INFO('Removing stale venv from previous install');
     try { fs.rmSync(VENV_DIR, { recursive: true, force: true }); } catch (e) { WARN('Failed to remove old venv:', e.message); }
   }
+  // If SETUP_FLAG exists but the venv was deleted (e.g. user removed it),
+  // clear the flag so dependencies re-install into the fresh venv
+  if (fs.existsSync(SETUP_FLAG) && !fs.existsSync(PYTHON_BIN)) {
+    INFO('Venv missing but setup flag present — re-running dependency install');
+    try { fs.unlinkSync(SETUP_FLAG); } catch (_) {}
+  }
 
   // Ensure data directories exist
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -450,8 +456,15 @@ function waitForServer(timeoutMs = 45000) {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
       http.get(`${SERVER_URL}/api/setup/check`, res => {
-        INFO(`server ready (${res.statusCode})`);
-        resolve();
+        res.resume();
+        if (res.statusCode === 200) {
+          INFO(`server ready (${res.statusCode})`);
+          resolve();
+        } else if (Date.now() > deadline) {
+          reject(new Error(`Backend returned ${res.statusCode} on port ${PORT}`));
+        } else {
+          setTimeout(check, 600);
+        }
       }).on('error', () => {
         if (Date.now() > deadline) {
           reject(new Error('Backend did not start. Is port 8000 free?'));
