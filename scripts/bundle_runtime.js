@@ -189,6 +189,20 @@ async function bundleMac(arch) {
   if (!fs.existsSync(path.join(pyDir, 'bin', 'python3'))) {
     console.log('  [extracting] Python…');
     await extractTarGz(pyTar, pyDir);
+    // python-build-standalone tars wrap everything in a 'python/' directory.
+    // Move files up one level if needed.
+    const inner = path.join(pyDir, 'python');
+    if (fs.existsSync(inner) && fs.statSync(inner).isDirectory()) {
+      for (const f of fs.readdirSync(inner)) {
+        const src = path.join(inner, f);
+        const dst = path.join(pyDir, f);
+        try { fs.renameSync(src, dst); } catch (_) { /* cross-device? copy+delete */ }
+      }
+      try { fs.rmdirSync(inner); } catch (_) {}
+    }
+    if (!fs.existsSync(path.join(pyDir, 'bin', 'python3'))) {
+      throw new Error(`Python extraction failed: bin/python3 not found in ${pyDir}`);
+    }
     console.log('  [done] Python extracted');
   }
 
@@ -205,17 +219,21 @@ async function bundleMac(arch) {
   if (!fs.existsSync(path.join(toolDir, 'uv'))) {
     console.log('  [extracting] uv…');
     await extractTarGz(uvTar, toolDir);
-    // The tar extracts to a subdirectory, move the binary up
-    const extractedDir = fs.readdirSync(toolDir).find(f => f.startsWith('uv-') && fs.statSync(path.join(toolDir, f)).isDirectory());
-    if (extractedDir) {
-      const srcDir = path.join(toolDir, extractedDir);
+    // uv tars may have a uv-{arch}-apple-darwin/ wrapper directory
+    const uvDirs = fs.readdirSync(toolDir).filter(f => f.startsWith('uv-') && fs.statSync(path.join(toolDir, f)).isDirectory());
+    for (const d of uvDirs) {
+      const srcDir = path.join(toolDir, d);
       for (const f of fs.readdirSync(srcDir)) {
-        fs.renameSync(path.join(srcDir, f), path.join(toolDir, f));
+        const dst = path.join(toolDir, f);
+        try { fs.renameSync(path.join(srcDir, f), dst); } catch (_) {}
       }
-      fs.rmdirSync(srcDir);
+      try { fs.rmdirSync(srcDir); } catch (_) {}
     }
     // Make executable
     try { fs.chmodSync(path.join(toolDir, 'uv'), 0o755); } catch (_) {}
+    if (!fs.existsSync(path.join(toolDir, 'uv'))) {
+      throw new Error('uv extraction failed: uv binary not found');
+    }
     console.log('  [done] uv extracted');
   }
 
