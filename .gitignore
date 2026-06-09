@@ -30,6 +30,7 @@ medrread_mac.zip
 # Bundled runtime (downloaded at build time, not committed)
 resources/python/
 resources/tools/
+resources/node/
 
 # Electron
 node_modules/
