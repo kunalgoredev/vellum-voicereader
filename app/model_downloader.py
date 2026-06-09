@@ -16,15 +16,15 @@ CHUNK_SIZE = 1024 * 1024
 MAX_RETRIES = 3
 
 _FALLBACK_SOURCES = {
-    "provider": "google_drive",
+    "provider": "huggingface",
     "models": {
         "kokoro": {
-            "filename": "kokoro-v0_19.pth",
-            "description": "Kokoro TTS Model (~320MB) — Required for the fast, lightweight TTS engine",
-            "size_mb": 320,
-            "url": "https://drive.google.com/uc?export=download&id=YOUR_GOOGLE_DRIVE_FILE_ID",
+            "filename": "kokoro-v1_0.pth",
+            "description": "Kokoro TTS Model (~310MB) — Required for the fast, lightweight TTS engine",
+            "size_mb": 310,
+            "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth",
             "alt_urls": {
-                "huggingface": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v0_19.pth"
+                "huggingface": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth"
             }
         }
     }

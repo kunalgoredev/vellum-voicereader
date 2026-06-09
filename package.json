@@ -94,8 +94,8 @@
       "gatekeeperAssess": false,
       "extraResources": [
         {
-          "from": "resources/python3",
-          "to": "python3",
+          "from": "resources/python",
+          "to": "python",
           "filter": ["**/*", "!get-pip.py"]
         }
       ]

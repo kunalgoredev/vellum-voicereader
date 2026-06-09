@@ -210,6 +210,19 @@ async function bundleMac(arch) {
   const pipPy = path.join(pyDir, 'get-pip.py');
   await download('https://bootstrap.pypa.io/get-pip.py', pipPy, 'get-pip.py');
 
+  console.log('  [bootstrapping] pip into standalone Python…');
+  try {
+    execFileSync(path.join(pyDir, 'bin', 'python3'), [pipPy, '--no-warn-script-location'], {
+      cwd: pyDir,
+      timeout: 60000,
+      stdio: 'pipe',
+    });
+    console.log('  [done] pip installed');
+  } catch (e) {
+    console.error('  [warn] pip bootstrap failed:', e.stderr ? e.stderr.toString() : e.message);
+    console.error('  [warn] setup will bootstrap pip on first launch');
+  }
+
   // uv binary for macOS
   const uvArch = arch === 'arm64' ? 'aarch64' : 'x86_64';
   const uvTar = path.join(RESOURCES, 'uv-mac.tar.gz');
